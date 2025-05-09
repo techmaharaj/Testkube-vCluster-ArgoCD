@@ -7,25 +7,21 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
-        
-      - name: Create k8s Kind Cluster
-        uses: helm/kind-action@v1
+     
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
 
-      - name: Install vCluster CLI
+      - name: Set up GKE credentials
         run: |
-          curl -sSL https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64 -o vcluster
-          chmod +x vcluster
-          sudo mv vcluster /usr/local/bin
-
-      - name: Create vCluster on Kind Cluster
-        run: |
-          vcluster create testkube-vcluster --namespace demo --connect=false
-          echo "Waiting for vCluster to be ready..."
-          sleep 100
+          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} \
+            --zone ${{ secrets.GKE_ZONE }} \
+            --project ${{ secrets.GCP_PROJECT_ID }}
 
       - name: Connect to vCluster
         run: |
-          vcluster connect testkube-vcluster --namespace demo
+          vcluster connect vcluster-testkube -n demo --update-current
           kubectl config current-context  # verify vcluster context is active
       
       - name: Deploy Sample Application
