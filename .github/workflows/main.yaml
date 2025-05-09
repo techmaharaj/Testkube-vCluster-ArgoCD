@@ -13,11 +13,10 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
 
-      - name: Manually install gke-gcloud-auth-plugin
+      - name: Manually install kubectl
         run: |
-          sudo apt-get install google-cloud-sdk-gke-gcloud-auth-plugin
-          gke-gcloud-auth-plugin --version
-
+          gcloud components install kubectl        
+  
       - name: Set up GKE credentials and install auth plugin
         run: |
           gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} \
