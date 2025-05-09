@@ -33,7 +33,8 @@ jobs:
           
       - name: Connect to vCluster
         run: |
-          vcluster connect vcluster-testkube -n demo --update-current
+          kubectl get pods -A
+          vcluster connect vcluster-testkube -n demo
           kubectl config current-context  # verify vcluster context is active
       
       - name: Deploy Sample Application
