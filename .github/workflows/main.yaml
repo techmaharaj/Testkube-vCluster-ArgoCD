@@ -38,10 +38,13 @@ jobs:
           kubectl get pods -n demo
           vcluster connect vcluster-testkube -n demo
           kubectl config current-context  # verify vcluster context is active
+          echo "Show pods on vCluster"
+          kubectl get pods -A
       
       - name: Deploy Sample Application
         run: |
           kubectl apply -f nginx-deployment.yaml
+          kubectl get all
 
       - name: Configure Testkube
         run: |
