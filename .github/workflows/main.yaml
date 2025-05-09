@@ -19,6 +19,12 @@ jobs:
             --zone ${{ secrets.GKE_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
+      - name: Install vCluster CLI
+        run: |
+          curl -sSL https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64 -o vcluster
+          chmod +x vcluster
+          sudo mv vcluster /usr/local/bin
+          
       - name: Connect to vCluster
         run: |
           vcluster connect vcluster-testkube -n demo --update-current
