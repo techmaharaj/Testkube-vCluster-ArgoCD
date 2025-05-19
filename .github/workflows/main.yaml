@@ -78,8 +78,6 @@ jobs:
         uses: kubeshop/setup-testkube@v1        
       - run: |
           testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
-          sleep 100
-          testkube get testworkflow curl-nginx-app
 
       - name: Delete namespace
         run: |
