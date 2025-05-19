@@ -66,12 +66,12 @@ jobs:
 
       - name: Provision ephemeral runner
         run: |
-          testkube install runner github-action-runner-${{ github.run_id }} --create --env vCluster --namespace testkube
+          testkube install runner github-action-runner-${{ github.run_id }} --create --namespace testkube
 
       - name: Run Test
         run: |
           kubectl apply -f tw.yaml
-          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-${{ github.run_id }} --tag pull-request=PR-${{ github.run_id }}
+          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-$PR_NUMBER
 
       - name: Disconnect vCluster and delete namespace
         run: |
