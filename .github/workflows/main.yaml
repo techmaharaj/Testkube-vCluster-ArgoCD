@@ -70,9 +70,9 @@ jobs:
           POD_NAME=$(kubectl get pods -n testkube | grep testkube-api-server | awk '{print $1}')
           sleep 100
 
-      - name: Run Testkube Test
+      - name: Run Test with Testkube
         uses: kubeshop/setup-testkube@v1        
-      - run: |
+        run: |
           kubectl apply -f tw.yaml
           testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
           sleep 100
