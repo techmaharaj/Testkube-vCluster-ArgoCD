@@ -40,17 +40,17 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.number }}
           echo "Running for PR #$PR_NUMBER"
-          vcluster create testkube-vcluster-$PR_NUMBER --namespace demo --connect=false
+          vcluster create testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER--connect=false
           echo "Waiting for vCluster to be ready..."
           sleep 100
 
       - name: Connect to vCluster
         run: |
           PR_NUMBER=${{ github.event.number }}
-          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo
+          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER
           kubectl config current-context  # verify vcluster context is active
           echo "Show pods on vCluster"
-          kubectl get pods -n demo
+          kubectl get pods -n demo-$PR_NUMBER
       
       - name: Deploy Sample Application
         run: |
@@ -83,4 +83,5 @@ jobs:
       - name: Delete vCluster
         run: |
           PR_NUMBER=${{ github.event.number }}
-          vcluster delete testkube-vcluster-$PR_NUMBER --namespace demo
+          vcluster delete testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER
+          kubectl delete ns demo-$PR_NUMBER
