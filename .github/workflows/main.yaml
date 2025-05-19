@@ -68,7 +68,6 @@ jobs:
 
       - name: Create Test Workflow on cluster
         run: |
-          kubectl apply -f tw.yaml
 
       - name: Run Testkube Test and check status
         uses: kubeshop/setup-testkube@v1
@@ -83,10 +82,8 @@ jobs:
 
       - name: Run Test
         run: |
-            testkube run tw curl-nginx-app -f \
-            --config url=http://nginx-service.default.svc.cluster.local \
-            --target name=github-action-runner-${{ github.run_id }} \
-            --tag pull-request=PR-${{ github.run_id }}
+          kubectl apply -f tw.yaml
+          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-${{ github.run_id }} --tag pull-request=PR-${{ github.run_id }}
 
       - name: Disconnect vCluster and delete namespace
         run: |
