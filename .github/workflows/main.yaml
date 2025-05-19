@@ -57,19 +57,7 @@ jobs:
           kubectl apply -f nginx-deployment.yaml
           kubectl get all
 
-      - name: Verify installation
-        run: helm list -n testkube
-  
-      - name: Check Pods Status
-        run: |
-          kubectl get pods --all-namespaces -o wide
-          POD_NAME=$(kubectl get pods -n testkube | grep testkube-api-server | awk '{print $1}')
-          sleep 100
-
-      - name: Create Test Workflow on cluster
-        run: |
-
-      - name: Run Testkube Test and check status
+      - name: Setup Testkube
         uses: kubeshop/setup-testkube@v1
         with:
           organization: ${{ secrets.TESTKUBE_ORG_ID }}
