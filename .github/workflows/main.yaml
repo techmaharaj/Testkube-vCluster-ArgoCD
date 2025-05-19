@@ -79,7 +79,8 @@ jobs:
       - run: |
           testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
 
-      - name: Delete namespace
+      - name: Disconnect vCluster and delete namespace
         run: |
           PR_NUMBER=${{ github.event.number }}
+          vcluster disconnect
           kubectl delete ns demo-$PR_NUMBER
