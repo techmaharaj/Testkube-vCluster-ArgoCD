@@ -30,6 +30,11 @@ jobs:
             --zone ${{ secrets.GKE_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
+      - name: Deploy Sample Application
+        run: |
+          kubectl apply -f nginx-deployment.yaml
+          kubectl get all
+
       - name: Install vCluster CLI
         run: |
           curl -sSL https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64 -o vcluster
@@ -51,11 +56,6 @@ jobs:
           kubectl config current-context  # verify vcluster context is active
           echo "Show pods on vCluster"
           kubectl get pods -n demo-$PR_NUMBER
-      
-      - name: Deploy Sample Application
-        run: |
-          kubectl apply -f nginx-deployment.yaml
-          kubectl get all
 
       - name: Configure Testkube
         run: |
@@ -70,18 +70,18 @@ jobs:
           POD_NAME=$(kubectl get pods -n testkube | grep testkube-api-server | awk '{print $1}')
           sleep 100
 
-      - name: Run Test with Testkube
+      - name: Create Test Workflow on cluster
         run: |
           kubectl apply -f tw.yaml
+
+      - name: Run Testkube Test and check status
+        uses: kubeshop/setup-testkube@v1        
+      - run: |
           testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
           sleep 100
-
-      - name: Check Test Execution Status
-        run: |
           testkube get testworkflow curl-nginx-app
 
-      - name: Delete vCluster
+      - name: Delete namespace
         run: |
           PR_NUMBER=${{ github.event.number }}
-          vcluster delete testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER
           kubectl delete ns demo-$PR_NUMBER
