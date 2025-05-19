@@ -57,10 +57,6 @@ jobs:
           kubectl apply -f nginx-deployment.yaml
           kubectl get all
 
-      - name: Configure Testkube
-        run: |
-          helm repo add kubeshop https://kubeshop.github.io/helm-charts ; helm repo update && helm upgrade --install --create-namespace testkube kubeshop/testkube --set testkube-api.cloud.key=${{ secrets.TESTKUBE_API_AGENT }} --set testkube-api.cloud.orgId=${{ secrets.TESTKUBE_ORG_ID }} --set testkube-api.cloud.envId=${{ secrets.TESTKUBE_ENV_ID }} --set testkube-api.minio.enabled=false --set mongodb.enabled=false --set testkube-dashboard.enabled=false --set testkube-api.cloud.url=agent.testkube.io:443 --namespace testkube
-
       - name: Verify installation
         run: helm list -n testkube
   
@@ -75,9 +71,22 @@ jobs:
           kubectl apply -f tw.yaml
 
       - name: Run Testkube Test and check status
-        uses: kubeshop/setup-testkube@v1        
-      - run: |
-          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
+        uses: kubeshop/setup-testkube@v1
+        with:
+          organization: ${{ secrets.TESTKUBE_ORG_ID }}
+          environment: ${{ secrets.TESTKUBE_ENV_ID }}
+          token: ${{ secrets.TESTKUBE_API_TOKEN }}
+
+      - name: Provision ephemeral runner
+        run: |
+          testkube install runner github-action-runner-${{ github.run_id }} --create --env vCluster --namespace testkube
+
+      - name: Run Test
+        run: |
+            testkube run tw curl-nginx-app -f \
+            --config url=http://nginx-service.default.svc.cluster.local \
+            --target name=github-action-runner-${{ github.run_id }} \
+            --tag pull-request=PR-${{ github.run_id }}
 
       - name: Disconnect vCluster and delete namespace
         run: |
