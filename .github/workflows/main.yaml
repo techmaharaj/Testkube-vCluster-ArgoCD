@@ -30,11 +30,6 @@ jobs:
             --zone ${{ secrets.GKE_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Deploy Sample Application
-        run: |
-          kubectl apply -f nginx-deployment.yaml
-          kubectl get all
-
       - name: Install vCluster CLI
         run: |
           curl -sSL https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64 -o vcluster
@@ -56,6 +51,11 @@ jobs:
           kubectl config current-context  # verify vcluster context is active
           echo "Show pods on vCluster"
           kubectl get pods -n demo-$PR_NUMBER
+
+      - name: Deploy Sample Application
+        run: |
+          kubectl apply -f nginx-deployment.yaml
+          kubectl get all
 
       - name: Configure Testkube
         run: |
