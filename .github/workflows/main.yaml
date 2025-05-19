@@ -71,7 +71,6 @@ jobs:
           sleep 100
 
       - name: Run Test with Testkube
-        uses: kubeshop/setup-testkube@v1        
         run: |
           kubectl apply -f tw.yaml
           testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local
