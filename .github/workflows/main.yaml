@@ -40,7 +40,7 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.number }}
           echo "Running for PR #$PR_NUMBER"
-          vcluster create testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER--connect=false
+          vcluster create testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER --connect=false
           echo "Waiting for vCluster to be ready..."
           sleep 100
 
