@@ -72,16 +72,9 @@ jobs:
         run: |
            testkube run testworkflow curl-nginx-app \
            -f \
-           --config url=http://nginx-service.default.svc.cluster.local
+           --config url=http://nginx-service.default.svc.cluster.local \
            --target name=github-action-runner-${{ github.run_id }} \
            --tag pull-request=PR-${{ github.run_id }}
-
-    - name: Kick off Testkube workflows
-      run: |
-         testkube run testworkflow pytest-junit \
-         -f \
-         --target name=github-action-runner-${{ github.run_id }} \
-         --tag pull-request=PR-${{ github.run_id }}
 
       - name: Disconnect vCluster and delete resources
         run: |
