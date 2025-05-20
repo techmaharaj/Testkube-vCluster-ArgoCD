@@ -70,10 +70,22 @@ jobs:
 
       - name: Run Test
         run: |
-          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-${{ github.run_id }}
+           testkube run testworkflow curl-nginx-app \
+           -f \
+           --config url=http://nginx-service.default.svc.cluster.local
+           --target name=github-action-runner-${{ github.run_id }} \
+           --tag pull-request=PR-${{ github.run_id }}
 
-      - name: Disconnect vCluster and delete namespace
+    - name: Kick off Testkube workflows
+      run: |
+         testkube run testworkflow pytest-junit \
+         -f \
+         --target name=github-action-runner-${{ github.run_id }} \
+         --tag pull-request=PR-${{ github.run_id }}
+
+      - name: Disconnect vCluster and delete resources
         run: |
           PR_NUMBER=${{ github.event.number }}
           vcluster disconnect
           kubectl delete ns demo-$PR_NUMBER
+          testkube delete runner github-action-runner-${{ github.run_id }}
