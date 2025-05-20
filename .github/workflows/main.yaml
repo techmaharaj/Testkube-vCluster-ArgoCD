@@ -66,7 +66,7 @@ jobs:
 
       - name: Provision ephemeral runner
         run: |
-          testkube install runner github-action-runner-${{ github.run_id }} --create --env sonali-srivastava-personal-env --namespace testkube
+          testkube install runner github-action-runner-${{ github.run_id }} --create --env sonali-srivastava-personal-env --namespace testkube --floating
 
       - name: Run Test
         run: |
@@ -79,6 +79,6 @@ jobs:
       - name: Disconnect vCluster and delete resources
         run: |
           PR_NUMBER=${{ github.event.number }}
+          testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall
           vcluster disconnect
           kubectl delete ns demo-$PR_NUMBER
-          testkube delete runner github-action-runner-${{ github.run_id }}
