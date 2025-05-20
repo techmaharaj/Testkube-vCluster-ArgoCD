@@ -70,7 +70,7 @@ jobs:
 
       - name: Run Test
         run: |
-          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-$PR_NUMBER
+          testkube run tw curl-nginx-app -f --config url=http://nginx-service.default.svc.cluster.local --target name=github-action-runner-${{ github.run_id }}
 
       - name: Disconnect vCluster and delete namespace
         run: |
