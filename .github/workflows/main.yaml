@@ -313,6 +313,8 @@ jobs:
           
           # Wait for ArgoCD deployment to vCluster
           echo "=== Waiting for ArgoCD to deploy to vCluster ==="
+          sleep 10
+          
           argocd app sync nginx-vcluster-pr-$PR_NUMBER
           argocd app wait nginx-vcluster-pr-$PR_NUMBER --health --timeout 300
           
