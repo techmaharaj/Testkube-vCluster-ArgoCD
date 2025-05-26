@@ -369,15 +369,23 @@ jobs:
           # Wait a bit for runner to register
           sleep 30
           
-          # Check runner status
-          echo "=== Checking runner status ==="
-          testkube get runners
+          echo "$RUNNER_OUTPUT"
           
-          # Try to get runner details
-          if [ -n "$RUNNER_NAME" ]; then
-            echo "=== Runner details for $RUNNER_NAME ==="
-            testkube get runner "$RUNNER_NAME" || echo "Runner details not available yet"
+          # Extract the actual runner name from the output
+          ACTUAL_RUNNER_NAME=$(echo "$RUNNER_OUTPUT" | grep "Name:" | awk '{print $2}' | head -1)
+          
+          if [ -z "$ACTUAL_RUNNER_NAME" ]; then
+            echo "Failed to extract runner name, trying fallback..."
+            # Fallback: get the most recent runner
+            ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $2}')
           fi
+          
+          echo "Actual runner name: $ACTUAL_RUNNER_NAME"
+          echo "ACTUAL_RUNNER_NAME=$ACTUAL_RUNNER_NAME" >> $GITHUB_ENV
+          
+          # Wait for runner pod to be ready
+          echo "Waiting for runner pod to be ready..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=testkube-runner --timeout=300s -n testkube
           
           echo "=== Testkube runner provisioned in vCluster ==="
 
@@ -385,12 +393,13 @@ jobs:
         id: run-tests
         run: |
           echo "=== Running Tests in vCluster with Testkube ==="
+          echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
           
           # Run the test workflow targeting our nginx app deployed via ArgoCD
           testkube run testworkflow curl-nginx-app \
             -f \
             --config url=http://nginx-service.default.svc.cluster.local \
-            --target name=github-action-runner-${{ github.run_id }} \
+            --target name=$ACTUAL_RUNNER_NAME \
             --tag pull-request=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
             --tag demo=gitopscon-ephemeral-env
