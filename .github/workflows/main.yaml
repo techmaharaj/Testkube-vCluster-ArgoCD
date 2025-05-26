@@ -343,12 +343,18 @@ jobs:
           echo "=== ArgoCD deployment to vCluster completed successfully ==="
 
       # ==================== Testkube Module ====================
-      - name: Setup Testkube in vCluster
-        id: setup-testkube
+      - name: Setup Testkube
+        uses: kubeshop/setup-testkube@v1
+        with:
+          organization: ${{ secrets.TESTKUBE_ORG_ID }}
+          environment: ${{ secrets.TESTKUBE_ENV_ID }}
+          token: ${{ secrets.TESTKUBE_API_TOKEN }}
+
+      - name: Provision ephemeral runner in vCluster
         run: |
-          echo "=== Setting up Testkube in vCluster ==="
+          echo "=== Provisioning Testkube runner in vCluster ==="
           
-          # Switch to vCluster context (reconnect if needed)
+          # Ensure we're connected to vCluster
           if ! kubectl get nodes >/dev/null 2>&1; then
             echo "Reconnecting to vCluster..."
             kill $VCLUSTER_PID 2>/dev/null || true
@@ -358,114 +364,41 @@ jobs:
             sleep 30
           fi
           
-          # Install Testkube CLI
-          curl -sSLf https://get.testkube.io | sh
-          sudo mv bin/kubectl-testkube /usr/local/bin/testkube
+          # Provision ephemeral runner in vCluster
+          testkube install runner github-action-runner-${{ github.run_id }} \
+            --create \
+            --env ${{ secrets.TESTKUBE_ENV_ID }} \
+            --namespace testkube \
+            --floating
           
-          # Install Testkube in vCluster
-          testkube init --no-confirm
-          
-          # Wait for Testkube to be ready
-          echo "Waiting for Testkube to be ready..."
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=testkube-api-server -n testkube --timeout=300s
-          
-          echo "=== Testkube ready in vCluster ==="
-          testkube version
-          testkube status
+          echo "=== Testkube runner provisioned in vCluster ==="
 
       - name: Run Tests with Testkube in vCluster
         id: run-tests
         run: |
           echo "=== Running Tests in vCluster with Testkube ==="
           
-          # Create a comprehensive test for our nginx app
-          cat > nginx-test.yaml << EOF
-          apiVersion: tests.testkube.io/v3
-          kind: Test
-          metadata:
-            name: nginx-e2e-test-pr-$PR_NUMBER
-            namespace: testkube
-          spec:
-            type: curl/test
-            content:
-              type: string
-              data: |
-                #!/bin/bash
-                set -e
-                
-                echo "=== Running E2E Tests for Nginx App Deployed via ArgoCD ==="
-                
-                # Test 1: Service connectivity
-                echo "Test 1: Testing service connectivity..."
-                response=\$(curl -s -w "%{http_code}" http://nginx-service.default.svc.cluster.local)
-                if [[ "\$response" == *"200" ]]; then
-                  echo "✅ Service connectivity test passed"
-                else
-                  echo "❌ Service connectivity test failed"
-                  exit 1
-                fi
-                
-                # Test 2: Response content
-                echo "Test 2: Testing response content..."
-                content=\$(curl -s http://nginx-service.default.svc.cluster.local)
-                if [[ "\$content" == *"Welcome to nginx"* ]]; then
-                  echo "✅ Response content test passed"
-                else
-                  echo "❌ Response content test failed"
-                  exit 1
-                fi
-                
-                # Test 3: Service availability
-                echo "Test 3: Testing service availability..."
-                for i in {1..5}; do
-                  curl -f http://nginx-service.default.svc.cluster.local > /dev/null
-                  if [ \$? -eq 0 ]; then
-                    echo "✅ Request \$i succeeded"
-                  else
-                    echo "❌ Request \$i failed"
-                    exit 1
-                  fi
-                  sleep 1
-                done
-                
-                echo "=== All E2E tests passed successfully! ==="
-                echo "✅ ArgoCD deployment to vCluster verified via Testkube"
-          EOF
-          
-          # Apply the test
-          kubectl apply -f nginx-test.yaml
-          
-          # Run the test and wait for completion
-          echo "=== Running E2E test ==="
-          testkube run test nginx-e2e-test-pr-$PR_NUMBER --watch --verbose
+          # Run the test workflow targeting our nginx app deployed via ArgoCD
+          testkube run testworkflow curl-nginx-app \
+            -f \
+            --config url=http://nginx-service.default.svc.cluster.local \
+            --target name=github-action-runner-${{ github.run_id }} \
+            --tag pull-request=PR-${{ github.run_id }} \
+            --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
+            --tag demo=gitopscon-ephemeral-env
           
           echo "=== Test Results ==="
-          testkube get execution --test nginx-e2e-test-pr-$PR_NUMBER --limit 1
-
-      - name: Demo Summary
-        id: demo-summary
-        if: always()
-        run: |
-          echo "=== GitOpsCon Demo Summary ==="
-          echo "✅ Created ephemeral vCluster: testkube-vcluster-$PR_NUMBER"
-          echo "✅ Registered vCluster with ArgoCD using cluster secret"
-          echo "✅ ArgoCD deployed application directly to vCluster"
-          echo "✅ Ran comprehensive E2E tests with Testkube in vCluster"
-          echo "🎯 Demonstrated complete GitOps workflow with ephemeral environments"
-          echo ""
-          echo "GitOps Flow Demonstrated:"
-          echo "1. 🚀 Ephemeral vCluster created for PR"
-          echo "2. 🔄 ArgoCD manages deployment to vCluster"
-          echo "3. 🧪 Testkube runs tests in isolated environment"
-          echo "4. 🧹 Automatic cleanup after testing"
-          echo ""
-          echo "Benefits shown:"
-          echo "- Complete isolation (own Kubernetes cluster)"
-          echo "- GitOps deployment to ephemeral environments"
-          echo "- Full testing capabilities with Testkube"
-          echo "- Zero conflicts with other environments"
+          echo "✅ ArgoCD deployment to vCluster verified via Testkube"
+          echo "✅ Ephemeral testing environment validated"
 
       # ==================== Cleanup Module ====================
+      - name: Cleanup Testkube Runner
+        if: always()
+        run: |
+          echo "=== Cleaning up Testkube runner ==="
+          testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall || true
+          echo "=== Testkube runner cleanup completed ==="
+
       - name: Cleanup ArgoCD Application
         if: always()
         run: |
@@ -506,19 +439,3 @@ jobs:
           kubectl delete namespace demo-$PR_NUMBER --ignore-not-found=true
           
           echo "=== vCluster cleanup completed ==="
-
-      - name: Final Status Check
-        if: always()
-        run: |
-          echo "=== Final Status Check ==="
-          
-          # Switch to host context
-          kubectl config use-context $HOST_CONTEXT || true
-          
-          echo "Remaining demo namespaces:"
-          kubectl get namespaces | grep demo- || echo "✅ No demo namespaces remaining"
-          
-          echo "ArgoCD applications:"
-          kubectl get applications -n argocd | grep nginx-vcluster-pr- || echo "✅ No ephemeral applications found"
-          
-          echo "=== GitOpsCon Demo Workflow completed successfully ==="
