@@ -175,7 +175,14 @@ jobs:
           
           # Wait for service account to be ready
           echo "Waiting for service account to be ready..."
-          sleep 10
+          for i in {1..60}; do
+            if kubectl get serviceaccount argocd-manager -n kube-system >/dev/null 2>&1; then
+              echo "✅ Service account exists"
+              break
+            fi
+            echo "Waiting for service account to be created... ($i/60)"
+            sleep 2
+          done
           
           # Create a longer-lived token (24 hours)
           echo "Creating service account token..."
