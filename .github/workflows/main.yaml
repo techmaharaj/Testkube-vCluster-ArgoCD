@@ -373,11 +373,25 @@ jobs:
           echo "=== Checking runner status ==="
           testkube get runners
           
-          echo "Failed to extract runner name, trying fallback..."
-          ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $2}')
+          # Extract runner name from the "Name:" line
+          ACTUAL_RUNNER_NAME=$(echo "$RUNNER_OUTPUT" | grep "^Name:" | awk '{print $2}')
           
-          echo "Actual runner name: $ACTUAL_RUNNER_NAME"
+          if [ -z "$ACTUAL_RUNNER_NAME" ]; then
+            echo "Failed to extract runner name from create output, trying fallback..."
+            # Fallback: extract from runners list (use field 3, not 2)
+            ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $3}')
+          fi
+          
+          echo "Extracted runner name: $ACTUAL_RUNNER_NAME"
           echo "ACTUAL_RUNNER_NAME=$ACTUAL_RUNNER_NAME" >> $GITHUB_ENV
+          
+          # Verify it's not empty
+          if [ -z "$ACTUAL_RUNNER_NAME" ]; then
+            echo "❌ Failed to get runner name"
+            echo "Debug - Available runners:"
+            testkube get runners
+            exit 1
+          fi
           
           # Wait for runner pod to be ready
           echo "Waiting for runner pod to be ready..."
