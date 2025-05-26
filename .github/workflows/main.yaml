@@ -322,6 +322,7 @@ jobs:
           
           # Sync and check status
           echo "=== Syncing ArgoCD application ==="
+          sleep 10
           argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300
           
           echo "=== Final ArgoCD Application Status ==="
