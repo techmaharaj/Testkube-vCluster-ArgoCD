@@ -175,6 +175,10 @@ jobs:
             --serviceaccount=kube-system:argocd-manager \
             --dry-run=client -o yaml | kubectl apply -f -
           
+          # Wait for service account to be fully available
+          echo "Waiting for service account to be ready..."
+          kubectl wait --for=jsonpath='{.metadata.name}'=argocd-manager serviceaccount/argocd-manager -n kube-system --timeout=60s
+          
           # Get service account token
           SA_SECRET_NAME=$(kubectl get serviceaccount argocd-manager -n kube-system -o jsonpath='{.secrets[0].name}' 2>/dev/null || echo "")
           
