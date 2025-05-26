@@ -368,17 +368,13 @@ jobs:
 
           # Wait a bit for runner to register
           sleep 30
+
+          # Check runner status
+          echo "=== Checking runner status ==="
+          testkube get runners
           
-          echo "$RUNNER_OUTPUT"
-          
-          # Extract the actual runner name from the output
-          ACTUAL_RUNNER_NAME=$(echo "$RUNNER_OUTPUT" | grep "Name:" | awk '{print $2}' | head -1)
-          
-          if [ -z "$ACTUAL_RUNNER_NAME" ]; then
-            echo "Failed to extract runner name, trying fallback..."
-            # Fallback: get the most recent runner
-            ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $2}')
-          fi
+          echo "Failed to extract runner name, trying fallback..."
+          ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $2}')
           
           echo "Actual runner name: $ACTUAL_RUNNER_NAME"
           echo "ACTUAL_RUNNER_NAME=$ACTUAL_RUNNER_NAME" >> $GITHUB_ENV
