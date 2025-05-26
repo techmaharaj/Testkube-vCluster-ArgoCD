@@ -5,6 +5,9 @@ on:
     branches:
       - main 
 
+env:
+  PR_NUMBER: ${{ github.event.number || github.run_id }}
+
 jobs:
   run-test:
     runs-on: ubuntu-latest
@@ -12,7 +15,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
      
-      - name: Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
@@ -44,79 +47,184 @@ jobs:
 
       - name: Verify existing installations
         run: |
+          echo "=== Host Cluster Info ==="
+          kubectl cluster-info
+          kubectl get nodes
+          
           echo "=== Checking ArgoCD ==="
           kubectl get pods -n argocd
           
           echo "=== Checking Testkube ==="
           kubectl get pods -n testkube || echo "Testkube namespace not found"
 
+      # ==================== vCluster Module ====================
       - name: Create vCluster
+        id: create-vcluster
         run: |
-          PR_NUMBER=${{ github.event.number || github.run_id }}
-          echo "Running for PR #$PR_NUMBER"
-          vcluster create testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER --connect=false
+          echo "=== Creating vCluster for PR $PR_NUMBER ==="
+          
+          # Create namespace
+          kubectl create namespace demo-$PR_NUMBER --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create vCluster
+          vcluster create testkube-vcluster-$PR_NUMBER \
+            --namespace demo-$PR_NUMBER \
+            --connect=false \
+            --extra-values="
+            syncer:
+              extraArgs:
+              - --tls-san=testkube-vcluster-$PR_NUMBER.demo-$PR_NUMBER.svc.cluster.local
+            "
           
           # Wait for vCluster to be ready
           echo "Waiting for vCluster to be ready..."
           kubectl wait --for=condition=ready pod -l app=vcluster --timeout=300s -n demo-$PR_NUMBER
+          
+          echo "=== vCluster created successfully ==="
+          kubectl get all -n demo-$PR_NUMBER
 
-      - name: Connect to vCluster and deploy app via ArgoCD
+      - name: Setup vCluster connectivity
+        id: setup-vcluster
         run: |
-          PR_NUMBER=${{ github.event.number || github.run_id }}
+          echo "=== Setting up vCluster connectivity ==="
           
-          # Deploy app directly to vCluster without ArgoCD cluster registration
-          echo "=== Connecting to vCluster ==="
-          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER
+          # Create kubeconfig for vCluster
+          vcluster connect testkube-vcluster-$PR_NUMBER \
+            --namespace demo-$PR_NUMBER \
+            --server=https://testkube-vcluster-$PR_NUMBER.demo-$PR_NUMBER.svc.cluster.local \
+            --print > vcluster-kubeconfig.yaml
           
-          # Verify vCluster connection
-          echo "=== vCluster Status ==="
+          # Test vCluster connectivity by connecting directly
+          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
+          VCLUSTER_PID=$!
+          echo "VCLUSTER_PID=$VCLUSTER_PID" >> $GITHUB_ENV
+          
+          # Wait for connection
+          sleep 30
+          
+          echo "=== Verifying vCluster connection ==="
           kubectl get nodes
+          kubectl get namespaces
           
-          # Deploy nginx directly to vCluster
-          echo "=== Deploying nginx to vCluster ==="
-          kubectl apply -f - <<EOF
-          apiVersion: apps/v1
-          kind: Deployment
+          # Create default namespace if it doesn't exist
+          kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "=== vCluster connectivity established ==="
+
+      # ==================== ArgoCD Module ====================
+      - name: Setup ArgoCD connectivity
+        id: setup-argocd
+        run: |
+          echo "=== Setting up ArgoCD connectivity ==="
+          
+          # Get ArgoCD admin password
+          ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=$ARGOCD_PASSWORD" >> $GITHUB_ENV
+          
+          # Check if ArgoCD server is exposed
+          ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          
+          if [ -z "$ARGOCD_SERVER" ]; then
+            echo "Setting up ArgoCD port-forward..."
+            kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+            ARGOCD_PORT_FORWARD_PID=$!
+            echo "ARGOCD_PORT_FORWARD_PID=$ARGOCD_PORT_FORWARD_PID" >> $GITHUB_ENV
+            sleep 15
+            ARGOCD_SERVER="localhost:8080"
+          fi
+          
+          echo "ARGOCD_SERVER=$ARGOCD_SERVER" >> $GITHUB_ENV
+          echo "=== ArgoCD connectivity established ==="
+
+      - name: Register vCluster with ArgoCD
+        id: register-vcluster
+        run: |
+          echo "=== Registering vCluster with ArgoCD ==="
+          
+          # Login to ArgoCD
+          argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
+          
+          # Add vCluster as destination cluster
+          argocd cluster add vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER \
+            --name vcluster-pr-$PR_NUMBER \
+            --kubeconfig vcluster-kubeconfig.yaml \
+            --yes
+          
+          # Verify cluster was added
+          argocd cluster list
+          
+          echo "=== vCluster registered with ArgoCD ==="
+
+      - name: Deploy Application via ArgoCD
+        id: deploy-app
+        run: |
+          echo "=== Creating ArgoCD Application ==="
+          
+          # Create ArgoCD Application manifest
+          cat > argocd-app-pr-$PR_NUMBER.yaml << EOF
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
           metadata:
-            name: nginx-deployment
-            namespace: default
+            name: nginx-app-pr-$PR_NUMBER
+            namespace: argocd
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
           spec:
-            replicas: 1
-            selector:
-              matchLabels:
-                app: nginx
-            template:
-              metadata:
-                labels:
-                  app: nginx
-              spec:
-                containers:
-                - name: nginx
-                  image: nginx:latest
-                  ports:
-                  - containerPort: 80
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: nginx-service
-            namespace: default
-          spec:
-            selector:
-              app: nginx
-            ports:
-            - port: 80
-              targetPort: 80
-            type: ClusterIP
+            project: default
+            source:
+              repoURL: ${{ github.server_url }}/${{ github.repository }}
+              targetRevision: ${{ github.head_ref || github.ref_name }}
+              path: k8s
+            destination:
+              name: vcluster-pr-$PR_NUMBER
+              namespace: default
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+              - CreateNamespace=true
+              - ApplyOutOfSyncOnly=true
           EOF
           
-          # Wait for deployment
-          kubectl wait --for=condition=available --timeout=300s deployment/nginx-deployment
+          # Apply the application
+          kubectl apply -f argocd-app-pr-$PR_NUMBER.yaml
           
-          # Verify deployment
-          echo "=== Verifying deployment ==="
-          kubectl get all
+          echo "=== ArgoCD Application created ==="
+          kubectl get application nginx-app-pr-$PR_NUMBER -n argocd
 
+      - name: Wait for Application Sync
+        id: wait-sync
+        run: |
+          echo "=== Waiting for ArgoCD to sync application ==="
+          
+          # Login again to ensure session is active
+          argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
+          
+          # Wait for application to sync and be healthy
+          argocd app wait nginx-app-pr-$PR_NUMBER --sync --health --timeout 300
+          
+          # Show application status
+          argocd app get nginx-app-pr-$PR_NUMBER
+          
+          echo "=== Application synced successfully ==="
+
+      - name: Verify Deployment in vCluster
+        id: verify-deployment
+        run: |
+          echo "=== Verifying deployment in vCluster ==="
+          
+          # Check deployment status
+          kubectl get all -n default
+          kubectl wait --for=condition=available --timeout=300s deployment/nginx-deployment -n default
+          
+          # Test nginx service
+          kubectl run test-pod --image=curlimages/curl:latest --rm -i --restart=Never -- \
+            curl -s http://nginx-service.default.svc.cluster.local
+          
+          echo "=== Deployment verified successfully ==="
+
+      # ==================== Testkube Module ====================
       - name: Setup Testkube
         uses: kubeshop/setup-testkube@v1
         with:
@@ -125,9 +233,18 @@ jobs:
           token: ${{ secrets.TESTKUBE_API_TOKEN }}
 
       - name: Provision ephemeral runner and run test
+        id: run-tests
         run: |
+          echo "=== Provisioning Testkube ephemeral runner ==="
+          
           # Provision ephemeral runner
-          testkube install runner github-action-runner-${{ github.run_id }} --create --env ${{ secrets.TESTKUBE_ENV_ID }} --namespace testkube --floating
+          testkube install runner github-action-runner-${{ github.run_id }} \
+            --create \
+            --env ${{ secrets.TESTKUBE_ENV_ID }} \
+            --namespace testkube \
+            --floating
+          
+          echo "=== Running tests ==="
           
           # Run the test
           testkube run testworkflow curl-nginx-app \
@@ -135,16 +252,17 @@ jobs:
            --config url=http://nginx-service.default.svc.cluster.local \
            --target name=github-action-runner-${{ github.run_id }} \
            --tag pull-request=PR-${{ github.run_id }}
+          
+          echo "=== Tests completed ==="
 
-      - name: Cleanup resources
+      # ==================== Cleanup Module ====================
+      - name: Cleanup ArgoCD Application
         if: always()
         run: |
-          PR_NUMBER=${{ github.event.number || github.run_id }}
+          echo "=== Cleaning up ArgoCD Application ==="
           
-          # Kill any port-forward processes
-          kill $VCLUSTER_PID $VCLUSTER_PORT_FORWARD_PID $ARGOCD_PORT_FORWARD_PID 2>/dev/null || true
-          pkill -f "kubectl port-forward" || true
-          pkill -f "vcluster connect" || true
+          # Login to ArgoCD
+          argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure || true
           
           # Delete ArgoCD application
           kubectl delete application nginx-app-pr-$PR_NUMBER -n argocd --ignore-not-found=true
@@ -152,9 +270,33 @@ jobs:
           # Remove cluster from ArgoCD
           argocd cluster rm vcluster-pr-$PR_NUMBER --yes || true
           
+          echo "=== ArgoCD cleanup completed ==="
+
+      - name: Cleanup Testkube
+        if: always()
+        run: |
+          echo "=== Cleaning up Testkube resources ==="
+          
           # Delete Testkube runner
           testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall || true
           
-          # Disconnect and delete vCluster
+          echo "=== Testkube cleanup completed ==="
+
+      - name: Cleanup vCluster
+        if: always()
+        run: |
+          echo "=== Cleaning up vCluster ==="
+          
+          # Kill port-forward processes
+          kill $VCLUSTER_PID $ARGOCD_PORT_FORWARD_PID 2>/dev/null || true
+          pkill -f "kubectl port-forward" || true
+          pkill -f "vcluster connect" || true
+          
+          # Disconnect vCluster
           vcluster disconnect || true
-          kubectl delete ns demo-$PR_NUMBER --ignore-not-found=true
+          
+          # Delete vCluster and namespace
+          vcluster delete testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER || true
+          kubectl delete namespace demo-$PR_NUMBER --ignore-not-found=true
+          
+          echo "=== vCluster cleanup completed ==="
