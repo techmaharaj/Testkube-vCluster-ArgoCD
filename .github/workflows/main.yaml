@@ -182,36 +182,58 @@ jobs:
           
           echo "=== ArgoCD connectivity established ==="
 
-      - name: Register vCluster with ArgoCD
-        id: register-vcluster
+      - name: Register vCluster with ArgoCD (Token Method)
+        id: register-vcluster-token
         run: |
-          echo "=== Registering vCluster with ArgoCD ==="
+          echo "=== Creating service account in vCluster for ArgoCD ==="
           
-          # Ensure we're on host context for ArgoCD operations
+          # Switch to vCluster to create service account
+          kubectl config use-context vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER
+          
+          # Create service account for ArgoCD
+          kubectl create serviceaccount argocd-manager -n kube-system
+          kubectl create clusterrolebinding argocd-manager --clusterrole=cluster-admin --serviceaccount=kube-system:argocd-manager
+          
+          # Create token for the service account
+          kubectl create token argocd-manager -n kube-system --duration=24h > vcluster-token.txt
+          VCLUSTER_TOKEN=$(cat vcluster-token.txt)
+          
+          # Switch back to host context
           kubectl config use-context $HOST_CONTEXT
           
-          # Check what context name was actually created in the vCluster kubeconfig
-          echo "=== Checking vCluster kubeconfig content ==="
-          cat vcluster-kubeconfig.yaml
+          # Get vCluster CA certificate
+          VCLUSTER_CA=$(kubectl get secret vc-testkube-vcluster-$PR_NUMBER -n demo-$PR_NUMBER -o jsonpath='{.data.certificate-authority}')
           
-          # Extract the actual context name from the kubeconfig
-          VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
-          echo "Actual vCluster context name: $VCLUSTER_CONTEXT_NAME"
+          # Create token-based kubeconfig for ArgoCD
+          cat > vcluster-token-kubeconfig.yaml << EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              certificate-authority-data: $VCLUSTER_CA
+              server: https://testkube-vcluster-$PR_NUMBER.demo-$PR_NUMBER.svc.cluster.local:443
+            name: vcluster-pr-$PR_NUMBER
+          contexts:
+          - context:
+              cluster: vcluster-pr-$PR_NUMBER
+              user: vcluster-pr-$PR_NUMBER
+            name: vcluster-pr-$PR_NUMBER
+          current-context: vcluster-pr-$PR_NUMBER
+          users:
+          - name: vcluster-pr-$PR_NUMBER
+            user:
+              token: $VCLUSTER_TOKEN
+          EOF
           
-          # Login to ArgoCD
+          # Login to ArgoCD and register cluster
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
           
-          # Add vCluster as destination cluster using the actual context name
-          argocd cluster add $VCLUSTER_CONTEXT_NAME \
+          argocd cluster add vcluster-pr-$PR_NUMBER \
             --name vcluster-pr-$PR_NUMBER \
-            --kubeconfig vcluster-kubeconfig.yaml \
+            --kubeconfig vcluster-token-kubeconfig.yaml \
             --yes
           
-          # Verify cluster was added
-          echo "Registered clusters:"
-          argocd cluster list
-          
-          echo "=== vCluster registered with ArgoCD ==="
+          echo "=== vCluster registered with ArgoCD using service account token ==="
 
       - name: Deploy Application via ArgoCD
         id: deploy-app
