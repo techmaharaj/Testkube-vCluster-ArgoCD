@@ -66,15 +66,10 @@ jobs:
           # Create namespace
           kubectl create namespace demo-$PR_NUMBER --dry-run=client -o yaml | kubectl apply -f -
           
-          # Create vCluster
+          # Create vCluster (simple approach)
           vcluster create testkube-vcluster-$PR_NUMBER \
             --namespace demo-$PR_NUMBER \
-            --connect=false \
-            --extra-values="
-            syncer:
-              extraArgs:
-              - --tls-san=testkube-vcluster-$PR_NUMBER.demo-$PR_NUMBER.svc.cluster.local
-            "
+            --connect=false
           
           # Wait for vCluster to be ready
           echo "Waiting for vCluster to be ready..."
