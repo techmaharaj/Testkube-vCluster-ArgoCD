@@ -402,13 +402,37 @@ jobs:
       - name: Run Tests with Testkube in vCluster
         id: run-tests
         run: |
+          
+          # Switch back to host context
+          kubectl config use-context $HOST_CONTEXT
+          
+          # Wait for ArgoCD deployment
+          echo "Checking ArgoCD application..."
+          argocd app wait nginx-vcluster-pr-$PR_NUMBER --timeout 300 || echo "ArgoCD wait timed out"
+          
+          # Verify nginx is running in vCluster
+          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
+          sleep 20
+          
+          echo "=== Verifying nginx deployment in vCluster ==="
+          kubectl get pods,svc -n default
+          
+          # Get nginx service IP from vCluster
+          NGINX_SERVICE_IP=$(kubectl get svc nginx-service -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "nginx-service.default.svc.cluster.local")
+          echo "Nginx service: $NGINX_SERVICE_IP"
+          
+          # Switch back to host for test execution
+          kubectl config use-context $HOST_CONTEXT
+          
           echo "=== Running Tests in vCluster with Testkube ==="
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
+
+          
           
           # Run the test workflow targeting our nginx app deployed via ArgoCD
           testkube run testworkflow curl-nginx-app \
             -f \
-            --config url=http://nginx-service.default.svc.cluster.local \
+            --config url=$NGINX_SERVICE_IP \
             --target name=$ACTUAL_RUNNER_NAME \
             --tag pull-request=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
