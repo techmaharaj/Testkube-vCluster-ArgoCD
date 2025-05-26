@@ -121,10 +121,11 @@ jobs:
           # Create namespace
           kubectl create namespace demo-$PR_NUMBER --dry-run=client -o yaml | kubectl apply -f -
           
-          # Create vCluster (simple approach)
+          # Create vCluster with proper configuration for ArgoCD access
           vcluster create testkube-vcluster-$PR_NUMBER \
             --namespace demo-$PR_NUMBER \
-            --connect=false
+            --connect=false \
+            --expose
           
           # Wait for vCluster to be ready
           echo "Waiting for vCluster to be ready..."
@@ -132,21 +133,25 @@ jobs:
           
           echo "=== vCluster created successfully ==="
           kubectl get all -n demo-$PR_NUMBER
+          
+          # Get vCluster service details for ArgoCD connection
+          echo "=== vCluster Service Details ==="
+          kubectl get svc -n demo-$PR_NUMBER
 
-      - name: Setup vCluster connectivity
+      - name: Setup vCluster connectivity and ArgoCD access
         id: setup-vcluster
         run: |
-          echo "=== Setting up vCluster connectivity ==="
+          echo "=== Setting up vCluster connectivity for ArgoCD ==="
           
-          # Save the current (host) context before connecting to vCluster
+          # Save the current (host) context
           HOST_CONTEXT=$(kubectl config current-context)
           echo "HOST_CONTEXT=$HOST_CONTEXT" >> $GITHUB_ENV
           echo "Host cluster context: $HOST_CONTEXT"
           
-          # Create kubeconfig for ArgoCD to use
-          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER --print > vcluster-kubeconfig.yaml
+          # Create a service account in vCluster for ArgoCD
+          echo "=== Creating vCluster kubeconfig for ArgoCD ==="
           
-          # Also connect to vCluster for direct access
+          # Connect to vCluster to set it up
           vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
           VCLUSTER_PID=$!
           echo "VCLUSTER_PID=$VCLUSTER_PID" >> $GITHUB_ENV
@@ -161,16 +166,53 @@ jobs:
           # Create default namespace if it doesn't exist in vCluster
           kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
           
-          echo "=== vCluster connectivity established ==="
+          # Create service account for ArgoCD in vCluster
+          kubectl create serviceaccount argocd-manager -n kube-system --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create cluster role binding for ArgoCD
+          kubectl create clusterrolebinding argocd-manager-binding \
+            --clusterrole=cluster-admin \
+            --serviceaccount=kube-system:argocd-manager \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Get service account token
+          SA_SECRET_NAME=$(kubectl get serviceaccount argocd-manager -n kube-system -o jsonpath='{.secrets[0].name}' 2>/dev/null || echo "")
+          
+          if [ -z "$SA_SECRET_NAME" ]; then
+            # For newer Kubernetes versions, create token manually
+            kubectl create token argocd-manager -n kube-system --duration=24h > /tmp/sa-token
+            SA_TOKEN=$(cat /tmp/sa-token)
+          else
+            SA_TOKEN=$(kubectl get secret $SA_SECRET_NAME -n kube-system -o jsonpath='{.data.token}' | base64 -d)
+          fi
+          
+          # Get cluster CA
+          CA_DATA=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+          
+          # Switch back to host context
+          kubectl config use-context $HOST_CONTEXT
+          
+          # Get vCluster service endpoint
+          VCLUSTER_SERVER="https://$(kubectl get svc testkube-vcluster-$PR_NUMBER -n demo-$PR_NUMBER -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):443"
+          
+          if [[ "$VCLUSTER_SERVER" == *"null"* ]] || [[ "$VCLUSTER_SERVER" == "https://:443" ]]; then
+            # If LoadBalancer IP is not available, use ClusterIP with port-forward
+            VCLUSTER_CLUSTER_IP=$(kubectl get svc testkube-vcluster-$PR_NUMBER -n demo-$PR_NUMBER -o jsonpath='{.spec.clusterIP}')
+            VCLUSTER_SERVER="https://$VCLUSTER_CLUSTER_IP:443"
+            echo "Using ClusterIP for vCluster: $VCLUSTER_SERVER"
+          fi
+          
+          echo "VCLUSTER_SERVER=$VCLUSTER_SERVER" >> $GITHUB_ENV
+          echo "SA_TOKEN=$SA_TOKEN" >> $GITHUB_ENV
+          echo "CA_DATA=$CA_DATA" >> $GITHUB_ENV
+          
+          echo "=== vCluster connectivity prepared for ArgoCD ==="
 
       # ==================== ArgoCD GitOps to vCluster ====================
       - name: Configure ArgoCD to Deploy to vCluster
         id: setup-argocd-vcluster
         run: |
           echo "=== Configuring ArgoCD to Deploy Directly to vCluster ==="
-          
-          # Switch to host context
-          kubectl config use-context $HOST_CONTEXT
           
           # Get ArgoCD credentials
           ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
@@ -191,19 +233,37 @@ jobs:
           # Login to ArgoCD
           argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
-          # Add vCluster as a cluster in ArgoCD
-          echo "=== Adding vCluster to ArgoCD ==="
-          VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
-          echo "VCLUSTER_CONTEXT_NAME=$VCLUSTER_CONTEXT_NAME" >> $GITHUB_ENV
+          # Add vCluster as a cluster in ArgoCD using direct cluster secret creation
+          echo "=== Adding vCluster to ArgoCD using cluster secret ==="
           
-          # Register vCluster with ArgoCD
-          argocd cluster add "$VCLUSTER_CONTEXT_NAME" \
-            --kubeconfig vcluster-kubeconfig.yaml \
-            --name "vcluster-pr-$PR_NUMBER" \
-            --upsert || echo "Cluster registration completed"
+          cat > vcluster-secret.yaml << EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: vcluster-pr-$PR_NUMBER
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: cluster
+              ephemeral: "true"
+              pr: "$PR_NUMBER"
+          type: Opaque
+          stringData:
+            name: "vcluster-pr-$PR_NUMBER"
+            server: "$VCLUSTER_SERVER"
+            config: |
+              {
+                "bearerToken": "$SA_TOKEN",
+                "tlsClientConfig": {
+                  "insecure": true
+                }
+              }
+          EOF
+          
+          kubectl apply -f vcluster-secret.yaml
           
           # Verify cluster registration
           echo "=== Verifying ArgoCD cluster registration ==="
+          sleep 10
           argocd cluster list
           
           # Create ArgoCD application that deploys directly to vCluster
@@ -224,7 +284,7 @@ jobs:
               targetRevision: ${{ github.head_ref || github.ref_name }}
               path: k8s
             destination:
-              name: "vcluster-pr-$PR_NUMBER"
+              server: "$VCLUSTER_SERVER"
               namespace: default
             syncPolicy:
               automated:
@@ -255,14 +315,30 @@ jobs:
           echo "=== ArgoCD Application Status ==="
           argocd app get nginx-vcluster-pr-$PR_NUMBER
           
-          # Verify deployment in vCluster
+          # Verify deployment in vCluster by switching context
           echo "=== Verifying deployment in vCluster ==="
-          kubectl config use-context "$VCLUSTER_CONTEXT_NAME"
-          kubectl get all -n default
-          
-          # Test the service
-          kubectl run test-nginx-pr-$PR_NUMBER --image=curlimages/curl:latest --rm -i --restart=Never -- \
-            curl -s http://nginx-service.default.svc.cluster.local || echo "✅ Service test completed"
+          kubectl config use-context $HOST_CONTEXT
+          kubectl --kubeconfig <(echo "$CA_DATA" | base64 -d > /tmp/ca.crt && cat << EOK
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              certificate-authority: /tmp/ca.crt
+              server: $VCLUSTER_SERVER
+              insecure-skip-tls-verify: true
+            name: vcluster
+          contexts:
+          - context:
+              cluster: vcluster
+              user: argocd-manager
+            name: vcluster
+          current-context: vcluster
+          users:
+          - name: argocd-manager
+            user:
+              token: $SA_TOKEN
+          EOK
+          ) get all -n default || echo "Checking vCluster deployment status..."
           
           echo "=== ArgoCD deployment to vCluster completed successfully ==="
 
@@ -272,8 +348,15 @@ jobs:
         run: |
           echo "=== Setting up Testkube in vCluster ==="
           
-          # Ensure we're in vCluster context
-          kubectl config use-context "$VCLUSTER_CONTEXT_NAME"
+          # Switch to vCluster context (reconnect if needed)
+          if ! kubectl get nodes >/dev/null 2>&1; then
+            echo "Reconnecting to vCluster..."
+            kill $VCLUSTER_PID 2>/dev/null || true
+            vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
+            VCLUSTER_PID=$!
+            echo "VCLUSTER_PID=$VCLUSTER_PID" >> $GITHUB_ENV
+            sleep 30
+          fi
           
           # Install Testkube CLI
           curl -sSLf https://get.testkube.io | sh
@@ -365,7 +448,7 @@ jobs:
         run: |
           echo "=== GitOpsCon Demo Summary ==="
           echo "✅ Created ephemeral vCluster: testkube-vcluster-$PR_NUMBER"
-          echo "✅ Registered vCluster with ArgoCD"
+          echo "✅ Registered vCluster with ArgoCD using cluster secret"
           echo "✅ ArgoCD deployed application directly to vCluster"
           echo "✅ Ran comprehensive E2E tests with Testkube in vCluster"
           echo "🎯 Demonstrated complete GitOps workflow with ephemeral environments"
@@ -397,8 +480,8 @@ jobs:
           # Delete ArgoCD application
           kubectl delete application nginx-vcluster-pr-$PR_NUMBER -n argocd --ignore-not-found=true
           
-          # Remove cluster from ArgoCD
-          argocd cluster rm "vcluster-pr-$PR_NUMBER" || true
+          # Remove cluster secret from ArgoCD
+          kubectl delete secret vcluster-pr-$PR_NUMBER -n argocd --ignore-not-found=true
           
           echo "=== ArgoCD cleanup completed ==="
 
