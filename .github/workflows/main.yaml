@@ -60,6 +60,29 @@ jobs:
           echo "=== Checking Testkube ==="
           kubectl get pods -n testkube || echo "Testkube namespace not found"
 
+      - name: Pre-flight Cleanup
+        id: preflight-cleanup
+        run: |
+          echo "=== Pre-flight Cleanup for Ephemeral Demo ==="
+          
+          # Clean up any potential leftovers from previous demo runs
+          echo "Cleaning up any leftover demo resources..."
+          
+          # Delete any existing demo namespaces
+          kubectl get namespaces | grep "demo-" | awk '{print $1}' | xargs -r kubectl delete namespace --ignore-not-found=true
+          kubectl get namespaces | grep "nginx-staging-" | awk '{print $1}' | xargs -r kubectl delete namespace --ignore-not-found=true
+          
+          # Delete any leftover ArgoCD applications
+          kubectl get applications -n argocd | grep "nginx-app-pr-" | awk '{print $1}' | xargs -r kubectl delete application -n argocd --ignore-not-found=true
+          
+          # Clean up any leftover vClusters
+          vcluster list | grep "testkube-vcluster-" | awk '{print $1, $2}' | while read name namespace; do
+            echo "Cleaning up leftover vCluster: $name in $namespace"
+            vcluster delete "$name" --namespace "$namespace" || true
+          done
+          
+          echo "=== Pre-flight cleanup completed - Ready for ephemeral demo ==="
+
       - name: Install or Verify ArgoCD
         id: install-argocd
         run: |
@@ -142,10 +165,42 @@ jobs:
           echo "=== vCluster connectivity established ==="
 
       # ==================== ArgoCD GitOps Module ====================
-      - name: Setup ArgoCD with vCluster Integration
-        id: setup-argocd-vcluster-integration
+      - name: Ensure Clean Environment
+        id: ensure-clean
         run: |
-          echo "=== Setting up ArgoCD with vCluster Integration ==="
+          echo "=== Ensuring Clean Ephemeral Environment ==="
+          
+          kubectl config use-context $HOST_CONTEXT
+          
+          # Clean up any potential leftovers from previous runs
+          echo "Cleaning up any leftover resources..."
+          
+          # Delete any existing ArgoCD applications for this PR
+          kubectl delete application nginx-app-pr-$PR_NUMBER -n argocd --ignore-not-found=true
+          
+          # Delete any staging namespaces that might exist
+          kubectl delete namespace nginx-staging-$PR_NUMBER --ignore-not-found=true
+          
+          # Wait for cleanup to complete
+          while kubectl get namespace nginx-staging-$PR_NUMBER >/dev/null 2>&1; do
+            echo "Waiting for namespace cleanup..."
+            sleep 2
+          done
+          
+          # Verify clean state
+          echo "=== Verifying Clean State ==="
+          echo "Checking for any existing nginx deployments:"
+          kubectl get deployments -A | grep nginx || echo "✅ No nginx deployments found"
+          
+          echo "Checking for any ArgoCD applications for this PR:"
+          kubectl get applications -n argocd | grep "nginx-app-pr-$PR_NUMBER" || echo "✅ No existing ArgoCD applications found"
+          
+          echo "=== Environment is clean and ready for ephemeral setup ==="
+
+      - name: Setup ArgoCD Ephemeral Application
+        id: setup-argocd-ephemeral
+        run: |
+          echo "=== Creating Ephemeral ArgoCD Application ==="
           
           # Switch to host context
           kubectl config use-context $HOST_CONTEXT
@@ -166,7 +221,7 @@ jobs:
           echo "ARGOCD_SERVER=$ARGOCD_SERVER" >> $GITHUB_ENV
           echo "ARGOCD_PASSWORD=$ARGOCD_PASSWORD" >> $GITHUB_ENV
           
-          # Create ArgoCD application that deploys to staging first
+          # Create ephemeral ArgoCD application using original k8s/ manifests
           cat > argocd-app-pr-$PR_NUMBER.yaml << EOF
           apiVersion: argoproj.io/v1alpha1
           kind: Application
@@ -174,7 +229,9 @@ jobs:
             name: nginx-app-pr-$PR_NUMBER
             namespace: argocd
             labels:
-              vcluster.target: "demo-$PR_NUMBER"
+              ephemeral: "true"
+              pr: "$PR_NUMBER"
+              demo: "testkube-vcluster"
           spec:
             project: default
             source:
@@ -190,6 +247,7 @@ jobs:
                 selfHeal: true
               syncOptions:
               - CreateNamespace=true
+              - ApplyOutOfSyncOnly=true
           EOF
           
           kubectl apply -f argocd-app-pr-$PR_NUMBER.yaml
@@ -197,13 +255,17 @@ jobs:
           # Login to ArgoCD and sync
           argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
-          echo "=== Syncing Application via ArgoCD ==="
+          echo "=== Syncing Fresh Ephemeral Application ==="
           argocd app sync nginx-app-pr-$PR_NUMBER
           argocd app wait nginx-app-pr-$PR_NUMBER --health --timeout 300
           
-          echo "=== ArgoCD Application Status ==="
+          echo "=== Ephemeral Application Status ==="
           argocd app get nginx-app-pr-$PR_NUMBER
-
+          
+          # Verify deployment in staging
+          echo "=== Verifying Staging Deployment ==="
+          kubectl get all -n nginx-staging-$PR_NUMBER
+      
       - name: Promote to vCluster (GitOps Promotion)
         id: promote-to-vcluster
         run: |
