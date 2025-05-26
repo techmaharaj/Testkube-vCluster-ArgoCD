@@ -358,6 +358,19 @@ jobs:
             --env ${{ secrets.TESTKUBE_ENV_ID }} \
             --namespace testkube \
             --floating
+
+          # Wait a bit for runner to register
+          sleep 30
+          
+          # Check runner status
+          echo "=== Checking runner status ==="
+          testkube get runners
+          
+          # Try to get runner details
+          if [ -n "$RUNNER_NAME" ]; then
+            echo "=== Runner details for $RUNNER_NAME ==="
+            testkube get runner "$RUNNER_NAME" || echo "Runner details not available yet"
+          fi
           
           echo "=== Testkube runner provisioned in vCluster ==="
 
