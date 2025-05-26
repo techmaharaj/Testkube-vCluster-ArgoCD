@@ -189,30 +189,25 @@ jobs:
           echo "ArgoCD Server: $ARGOCD_SERVER"
           echo "Password retrieved successfully"
 
-      - name: Register vCluster with ArgoCD (Environment Fixed)
-        id: register-vcluster-env-fixed
+      - name: Register vCluster with ArgoCD (Final Fix)
+        id: register-vcluster-final-fix
         run: |
           echo "=== Creating service account in vCluster for ArgoCD ==="
           
-          # Debug: Print all environment variables
-          echo "Environment variables:"
-          echo "ARGOCD_SERVER: $ARGOCD_SERVER"
-          echo "ARGOCD_PASSWORD: [REDACTED - Length: ${#ARGOCD_PASSWORD}]"
-          echo "VCLUSTER_SERVICE_NAME: $VCLUSTER_SERVICE_NAME"
-          echo "VCLUSTER_SERVICE_PORT: $VCLUSTER_SERVICE_PORT"
+          # Use known vCluster service values (consistent pattern)
+          VCLUSTER_SERVICE_NAME="testkube-vcluster-$PR_NUMBER"
+          VCLUSTER_SERVICE_PORT="443"
+          VCLUSTER_SECRET_NAME="vc-testkube-vcluster-$PR_NUMBER"
           
-          # Verify we have required variables
-          if [ -z "$ARGOCD_SERVER" ] || [ -z "$ARGOCD_PASSWORD" ]; then
-            echo "❌ Missing ArgoCD environment variables. Trying to retrieve them again..."
-            
-            # Switch to host context and get ArgoCD details again
-            kubectl config use-context $HOST_CONTEXT
-            
-            ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-            ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "localhost:8080")
-            
-            echo "Retrieved ARGOCD_SERVER: $ARGOCD_SERVER"
-            echo "Retrieved ARGOCD_PASSWORD: [REDACTED]"
+          echo "Using vCluster service: $VCLUSTER_SERVICE_NAME:$VCLUSTER_SERVICE_PORT"
+          echo "Using vCluster secret: $VCLUSTER_SECRET_NAME"
+          
+          # Verify the service exists in host context
+          kubectl config use-context $HOST_CONTEXT
+          if ! kubectl get svc $VCLUSTER_SERVICE_NAME -n demo-$PR_NUMBER >/dev/null 2>&1; then
+            echo "❌ Service $VCLUSTER_SERVICE_NAME not found. Available services:"
+            kubectl get svc -n demo-$PR_NUMBER
+            exit 1
           fi
           
           # Get the actual vCluster context name
@@ -237,6 +232,12 @@ jobs:
           
           # Get vCluster CA certificate using the correct secret name
           VCLUSTER_CA=$(kubectl get secret $VCLUSTER_SECRET_NAME -n demo-$PR_NUMBER -o jsonpath='{.data.certificate-authority}')
+          
+          if [ -z "$VCLUSTER_CA" ]; then
+            echo "❌ Failed to get CA certificate from secret $VCLUSTER_SECRET_NAME"
+            kubectl get secrets -n demo-$PR_NUMBER
+            exit 1
+          fi
           
           # Use the correct service name and port
           VCLUSTER_SERVER="https://$VCLUSTER_SERVICE_NAME.demo-$PR_NUMBER.svc.cluster.local:$VCLUSTER_SERVICE_PORT"
@@ -265,10 +266,17 @@ jobs:
           
           echo "Created ArgoCD kubeconfig for vCluster"
           
-          # Login to ArgoCD with explicit parameters
-          echo "=== Logging into ArgoCD ==="
-          echo "Attempting login to: $ARGOCD_SERVER"
+          # Validate the kubeconfig YAML
+          echo "=== Validating kubeconfig YAML ==="
+          if ! kubectl config view --kubeconfig=vcluster-token-kubeconfig.yaml >/dev/null 2>&1; then
+            echo "❌ Invalid kubeconfig YAML generated. Contents:"
+            cat vcluster-token-kubeconfig.yaml
+            exit 1
+          fi
+          echo "✅ Kubeconfig YAML is valid"
           
+          # Login to ArgoCD (should already be logged in from previous step)
+          echo "=== Logging into ArgoCD ==="
           argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
           echo "=== Registering vCluster with ArgoCD ==="
@@ -282,7 +290,7 @@ jobs:
           argocd cluster list
           
           echo "=== vCluster registered with ArgoCD successfully ==="
-      
+            
       - name: Deploy Application via ArgoCD
         id: deploy-app
         run: |
