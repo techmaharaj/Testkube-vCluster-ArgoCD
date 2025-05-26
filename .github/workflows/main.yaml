@@ -373,13 +373,13 @@ jobs:
           echo "=== Checking runner status ==="
           testkube get runners
           
-          # Extract runner name from the "Name:" line
-          ACTUAL_RUNNER_NAME=$(echo "$RUNNER_OUTPUT" | grep "^Name:" | awk '{print $2}')
+          # Extract runner name ONLY from current cluster section
+          ACTUAL_RUNNER_NAME=$(testkube get runners | grep "•:testkube" | awk '{print $3}' | head -1)
           
           if [ -z "$ACTUAL_RUNNER_NAME" ]; then
-            echo "Failed to extract runner name from create output, trying fallback..."
-            # Fallback: extract from runners list (use field 3, not 2)
-            ACTUAL_RUNNER_NAME=$(testkube get runners | grep "github-action-runner" | tail -1 | awk '{print $3}')
+            echo "Failed to find runner in current cluster, trying more specific search..."
+            # Fallback: search in the "Recognized agents" section specifically
+            ACTUAL_RUNNER_NAME=$(testkube get runners | grep -A 20 "Recognized agents in current cluster" | grep "github-action-runner" | awk '{print $3}' | head -1)
           fi
           
           echo "Extracted runner name: $ACTUAL_RUNNER_NAME"
