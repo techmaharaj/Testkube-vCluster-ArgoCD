@@ -190,11 +190,19 @@ jobs:
           # Ensure we're on host context for ArgoCD operations
           kubectl config use-context $HOST_CONTEXT
           
+          # Check what context name was actually created in the vCluster kubeconfig
+          echo "=== Checking vCluster kubeconfig content ==="
+          cat vcluster-kubeconfig.yaml
+          
+          # Extract the actual context name from the kubeconfig
+          VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
+          echo "Actual vCluster context name: $VCLUSTER_CONTEXT_NAME"
+          
           # Login to ArgoCD
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
           
-          # Add vCluster as destination cluster
-          argocd cluster add vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER \
+          # Add vCluster as destination cluster using the actual context name
+          argocd cluster add $VCLUSTER_CONTEXT_NAME \
             --name vcluster-pr-$PR_NUMBER \
             --kubeconfig vcluster-kubeconfig.yaml \
             --yes
