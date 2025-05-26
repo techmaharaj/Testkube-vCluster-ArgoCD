@@ -142,8 +142,8 @@ jobs:
           echo "=== vCluster connectivity established ==="
 
       # ==================== ArgoCD Module ====================
-      - name: Get vCluster Service Details
-        id: get-vcluster-details
+      - name: Get vCluster Service Details (Fixed)
+        id: get-vcluster-details-fixed
         run: |
           echo "=== Getting vCluster Service Details ==="
           
@@ -154,32 +154,59 @@ jobs:
           echo "Services in demo-$PR_NUMBER namespace:"
           kubectl get svc -n demo-$PR_NUMBER
           
-          # Get the actual vCluster service name and details
-          VCLUSTER_SERVICE_NAME=$(kubectl get svc -n demo-$PR_NUMBER -o jsonpath='{.items[0].metadata.name}')
-          VCLUSTER_SERVICE_PORT=$(kubectl get svc -n demo-$PR_NUMBER -o jsonpath='{.items[0].spec.ports[0].port}')
+          # Get the actual vCluster API server service (not DNS service)
+          # The main vCluster service typically has port 443 and matches the vCluster name pattern
+          VCLUSTER_SERVICE_NAME="testkube-vcluster-$PR_NUMBER"
+          VCLUSTER_SERVICE_PORT="443"
           
-          echo "vCluster service name: $VCLUSTER_SERVICE_NAME"
-          echo "vCluster service port: $VCLUSTER_SERVICE_PORT"
+          # Verify the service exists
+          if kubectl get svc $VCLUSTER_SERVICE_NAME -n demo-$PR_NUMBER >/dev/null 2>&1; then
+            echo "✅ Found vCluster API service: $VCLUSTER_SERVICE_NAME"
+            # Get the actual port from the service
+            VCLUSTER_SERVICE_PORT=$(kubectl get svc $VCLUSTER_SERVICE_NAME -n demo-$PR_NUMBER -o jsonpath='{.spec.ports[?(@.port==443)].port}')
+            if [ -z "$VCLUSTER_SERVICE_PORT" ]; then
+              VCLUSTER_SERVICE_PORT="443"  # fallback
+            fi
+          else
+            echo "❌ vCluster API service not found, listing all services:"
+            kubectl get svc -n demo-$PR_NUMBER
+            exit 1
+          fi
+          
+          echo "vCluster API service name: $VCLUSTER_SERVICE_NAME"
+          echo "vCluster API service port: $VCLUSTER_SERVICE_PORT"
           
           # Set environment variables for use in subsequent steps
           echo "VCLUSTER_SERVICE_NAME=$VCLUSTER_SERVICE_NAME" >> $GITHUB_ENV
           echo "VCLUSTER_SERVICE_PORT=$VCLUSTER_SERVICE_PORT" >> $GITHUB_ENV
           
-          # Also check the secret name
-          echo "Secrets in demo-$PR_NUMBER namespace:"
-          kubectl get secrets -n demo-$PR_NUMBER
+          # Get the correct secret name (the one with certificate data)
+          VCLUSTER_SECRET_NAME="vc-testkube-vcluster-$PR_NUMBER"
           
-          # Get the actual secret name
-          VCLUSTER_SECRET_NAME=$(kubectl get secrets -n demo-$PR_NUMBER -o jsonpath='{.items[?(@.type=="Opaque")].metadata.name}' | grep "vc-")
-          echo "vCluster secret name: $VCLUSTER_SECRET_NAME"
+          # Verify the secret exists
+          if kubectl get secret $VCLUSTER_SECRET_NAME -n demo-$PR_NUMBER >/dev/null 2>&1; then
+            echo "✅ Found vCluster secret: $VCLUSTER_SECRET_NAME"
+          else
+            echo "❌ vCluster secret not found, listing all secrets:"
+            kubectl get secrets -n demo-$PR_NUMBER
+            exit 1
+          fi
+          
           echo "VCLUSTER_SECRET_NAME=$VCLUSTER_SECRET_NAME" >> $GITHUB_ENV
           
-          echo "=== vCluster service details collected ==="
+          echo "=== vCluster service details collected successfully ==="
 
       - name: Register vCluster with ArgoCD (Fixed)
-        id: register-vcluster-fixed
+        id: register-vcluster-final
         run: |
           echo "=== Creating service account in vCluster for ArgoCD ==="
+          
+          # Debug: Print all environment variables
+          echo "Environment variables:"
+          echo "ARGOCD_SERVER: $ARGOCD_SERVER"
+          echo "ARGOCD_PASSWORD: $ARGOCD_PASSWORD"
+          echo "VCLUSTER_SERVICE_NAME: $VCLUSTER_SERVICE_NAME"
+          echo "VCLUSTER_SERVICE_PORT: $VCLUSTER_SERVICE_PORT"
           
           # Get the actual vCluster context name
           VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
@@ -201,10 +228,10 @@ jobs:
           kubectl config use-context $HOST_CONTEXT
           echo "Switched back to host context"
           
-          # Get vCluster CA certificate using the actual secret name
+          # Get vCluster CA certificate using the correct secret name
           VCLUSTER_CA=$(kubectl get secret $VCLUSTER_SECRET_NAME -n demo-$PR_NUMBER -o jsonpath='{.data.certificate-authority}')
           
-          # Use the actual service name and port
+          # Use the correct service name and port
           VCLUSTER_SERVER="https://$VCLUSTER_SERVICE_NAME.demo-$PR_NUMBER.svc.cluster.local:$VCLUSTER_SERVICE_PORT"
           echo "vCluster server endpoint: $VCLUSTER_SERVER"
           
@@ -231,14 +258,16 @@ jobs:
           
           echo "Created ArgoCD kubeconfig for vCluster"
           
-          # Test connectivity from host cluster to vCluster
-          echo "=== Testing vCluster connectivity ==="
-          kubectl run test-vcluster-connectivity --image=curlimages/curl:latest --rm -i --restart=Never -- \
-            curl -k $VCLUSTER_SERVER/version || echo "Connectivity test completed"
+          # Test connectivity from host cluster to vCluster (proper endpoint)
+          echo "=== Testing vCluster API connectivity ==="
+          kubectl run test-vcluster-api --image=curlimages/curl:latest --rm -i --restart=Never -- \
+            curl -k $VCLUSTER_SERVER/version --max-time 10 || echo "API connectivity test completed"
           
-          # Login to ArgoCD and register cluster
-          argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
+          # Login to ArgoCD with explicit parameters
+          echo "=== Logging into ArgoCD ==="
+          argocd login $ARGOCD_SERVER --username admin --password "$ARGOCD_PASSWORD" --insecure
           
+          echo "=== Registering vCluster with ArgoCD ==="
           argocd cluster add vcluster-pr-$PR_NUMBER \
             --name vcluster-pr-$PR_NUMBER \
             --kubeconfig vcluster-token-kubeconfig.yaml \
