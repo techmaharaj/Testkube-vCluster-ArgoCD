@@ -187,8 +187,17 @@ jobs:
         run: |
           echo "=== Creating service account in vCluster for ArgoCD ==="
           
+          # Get the actual vCluster context name from the kubeconfig file
+          VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
+          echo "Using vCluster context: $VCLUSTER_CONTEXT_NAME"
+          
           # Switch to vCluster to create service account
-          kubectl config use-context vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER
+          kubectl config use-context "$VCLUSTER_CONTEXT_NAME"
+          
+          # Verify we're in the vCluster
+          echo "Current context: $(kubectl config current-context)"
+          echo "Available namespaces in vCluster:"
+          kubectl get namespaces
           
           # Create service account for ArgoCD
           kubectl create serviceaccount argocd-manager -n kube-system
@@ -197,9 +206,11 @@ jobs:
           # Create token for the service account
           kubectl create token argocd-manager -n kube-system --duration=24h > vcluster-token.txt
           VCLUSTER_TOKEN=$(cat vcluster-token.txt)
+          echo "Service account token created successfully"
           
           # Switch back to host context
           kubectl config use-context $HOST_CONTEXT
+          echo "Switched back to host context: $(kubectl config current-context)"
           
           # Get vCluster CA certificate
           VCLUSTER_CA=$(kubectl get secret vc-testkube-vcluster-$PR_NUMBER -n demo-$PR_NUMBER -o jsonpath='{.data.certificate-authority}')
@@ -225,6 +236,8 @@ jobs:
               token: $VCLUSTER_TOKEN
           EOF
           
+          echo "Created ArgoCD kubeconfig for vCluster"
+          
           # Login to ArgoCD and register cluster
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
           
@@ -233,8 +246,11 @@ jobs:
             --kubeconfig vcluster-token-kubeconfig.yaml \
             --yes
           
+          # Verify cluster was added
+          echo "Registered clusters:"
+          argocd cluster list
+          
           echo "=== vCluster registered with ArgoCD using service account token ==="
-
       - name: Deploy Application via ArgoCD
         id: deploy-app
         run: |
@@ -300,8 +316,12 @@ jobs:
         run: |
           echo "=== Verifying deployment in vCluster ==="
           
+          # Get the actual vCluster context name
+          VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
+          echo "Using vCluster context: $VCLUSTER_CONTEXT_NAME"
+          
           # Switch to vCluster context to check deployment
-          kubectl config use-context vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER
+          kubectl config use-context "$VCLUSTER_CONTEXT_NAME"
           
           echo "Current context: $(kubectl config current-context)"
           echo "Checking deployment in vCluster..."
