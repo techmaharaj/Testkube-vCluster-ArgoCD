@@ -224,10 +224,10 @@ jobs:
           # Login to ArgoCD
           argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
-          # Add vCluster as a cluster in ArgoCD using improved cluster secret
-          echo "=== Adding vCluster to ArgoCD using enhanced cluster secret ==="
+          # Add vCluster as a cluster in ArgoCD
+          echo "=== Adding vCluster to ArgoCD ==="
           
-          cat > vcluster-secret.yaml << EOF
+          cat > vcluster-secret.yaml << 'EOF'
           apiVersion: v1
           kind: Secret
           metadata:
@@ -252,6 +252,11 @@ jobs:
               }
           EOF
           
+          # Replace variables in the file
+          sed -i "s/\$PR_NUMBER/$PR_NUMBER/g" vcluster-secret.yaml
+          sed -i "s|\$VCLUSTER_SERVER|$VCLUSTER_SERVER|g" vcluster-secret.yaml
+          sed -i "s/\$SA_TOKEN/$SA_TOKEN/g" vcluster-secret.yaml
+          
           kubectl apply -f vcluster-secret.yaml
           
           # Wait for ArgoCD to pick up the cluster
@@ -262,12 +267,8 @@ jobs:
           echo "=== Verifying ArgoCD cluster registration ==="
           argocd cluster list
           
-          # Test connection manually using ArgoCD
-          echo "=== Testing ArgoCD connection to vCluster ==="
-          argocd cluster get "$VCLUSTER_SERVER" || echo "Initial connection test failed - will retry with application creation"
-          
-          # Create ArgoCD application that deploys directly to vCluster
-          cat > argocd-vcluster-app-pr-$PR_NUMBER.yaml << EOF
+          # Create ArgoCD application
+          cat > argocd-vcluster-app-pr-$PR_NUMBER.yaml << 'EOF'
           apiVersion: argoproj.io/v1alpha1
           kind: Application
           metadata:
@@ -280,8 +281,8 @@ jobs:
           spec:
             project: default
             source:
-              repoURL: ${{ github.server_url }}/${{ github.repository }}
-              targetRevision: ${{ github.head_ref || github.ref_name }}
+              repoURL: $GITHUB_REPO
+              targetRevision: $GITHUB_BRANCH
               path: k8s
             destination:
               server: "$VCLUSTER_SERVER"
@@ -300,9 +301,15 @@ jobs:
                   maxDuration: 3m
           EOF
           
+          # Replace variables
+          sed -i "s/\$PR_NUMBER/$PR_NUMBER/g" argocd-vcluster-app-pr-$PR_NUMBER.yaml
+          sed -i "s|\$VCLUSTER_SERVER|$VCLUSTER_SERVER|g" argocd-vcluster-app-pr-$PR_NUMBER.yaml
+          sed -i "s|\$GITHUB_REPO|${{ github.server_url }}/${{ github.repository }}|g" argocd-vcluster-app-pr-$PR_NUMBER.yaml
+          sed -i "s/\$GITHUB_BRANCH/${{ github.head_ref || github.ref_name }}/g" argocd-vcluster-app-pr-$PR_NUMBER.yaml
+          
           kubectl apply -f argocd-vcluster-app-pr-$PR_NUMBER.yaml
           
-          # Wait for application to be ready with better error handling
+          # Wait for application to be ready
           echo "=== Waiting for ArgoCD Application to be Ready ==="
           for i in {1..30}; do
             if argocd app get nginx-vcluster-pr-$PR_NUMBER >/dev/null 2>&1; then
@@ -313,68 +320,15 @@ jobs:
             sleep 5
           done
           
-          # Try to sync and wait with better error handling
-          echo "=== Attempting to sync ArgoCD application ==="
-          argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300 || echo "Sync command failed, checking status..."
-          
-          # Check application status regardless of sync result
-          echo "=== ArgoCD Application Status ==="
-          argocd app get nginx-vcluster-pr-$PR_NUMBER
-          
-          # If sync failed, let's try a different approach - update the cluster secret
-          if argocd app get nginx-vcluster-pr-$PR_NUMBER | grep -q "Error\|Failed"; then
-            echo "=== Sync failed, trying alternative authentication approach ==="
-            
-            # Switch back to vCluster and try using the connect approach
-            vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
-            sleep 15
-            
-            # Get the actual kubeconfig that works
-            kubectl config view --raw > /tmp/working-kubeconfig.yaml
-            
-            # Extract the working config
-            WORKING_SERVER=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.server}')
-            WORKING_CA=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
-            WORKING_TOKEN=$(kubectl config view --raw -o jsonpath='{.users[0].user.token}')
-            
-            kubectl config use-context $HOST_CONTEXT
-            
-            # Update the cluster secret with working config
-            cat > vcluster-secret-updated.yaml << EOF
-            apiVersion: v1
-            kind: Secret
-            metadata:
-              name: vcluster-pr-$PR_NUMBER
-              namespace: argocd
-              labels:
-                argocd.argoproj.io/secret-type: cluster
-                ephemeral: "true"
-                pr: "$PR_NUMBER"
-            type: Opaque
-            stringData:
-              name: "vcluster-pr-$PR_NUMBER"
-              server: "$VCLUSTER_SERVER"
-              config: |
-                {
-                  "bearerToken": "$WORKING_TOKEN",
-                  "tlsClientConfig": {
-                    "insecure": true
-                  }
-                }
-            EOF
-            
-            kubectl apply -f vcluster-secret-updated.yaml
-            sleep 30
-            
-            # Try sync again
-            argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300 || echo "Second sync attempt completed"
-          fi
+          # Sync and check status
+          echo "=== Syncing ArgoCD application ==="
+          argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300
           
           echo "=== Final ArgoCD Application Status ==="
           argocd app get nginx-vcluster-pr-$PR_NUMBER
           
-          echo "=== ArgoCD to vCluster configuration completed ==="
-      
+          echo "=== ArgoCD to vCluster configuration completed successfully! ==="
+       
       # ==================== Testkube Module ====================
       - name: Setup Testkube
         uses: kubeshop/setup-testkube@v1
