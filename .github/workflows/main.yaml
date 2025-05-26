@@ -197,8 +197,8 @@ jobs:
           
           echo "=== Environment is clean and ready for ephemeral setup ==="
 
-      - name: Setup ArgoCD Ephemeral Application
-        id: setup-argocd-ephemeral
+      - name: Setup ArgoCD Ephemeral Application (Fixed)
+        id: setup-argocd-ephemeral-fixed
         run: |
           echo "=== Creating Ephemeral ArgoCD Application ==="
           
@@ -220,6 +220,9 @@ jobs:
           
           echo "ARGOCD_SERVER=$ARGOCD_SERVER" >> $GITHUB_ENV
           echo "ARGOCD_PASSWORD=$ARGOCD_PASSWORD" >> $GITHUB_ENV
+          
+          # Login to ArgoCD first
+          argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
           # Create ephemeral ArgoCD application using original k8s/ manifests
           cat > argocd-app-pr-$PR_NUMBER.yaml << EOF
@@ -252,11 +255,45 @@ jobs:
           
           kubectl apply -f argocd-app-pr-$PR_NUMBER.yaml
           
-          # Login to ArgoCD and sync
-          argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
+          echo "=== Waiting for ArgoCD Application to be Ready ==="
+          
+          # Wait for the application to be fully created and ready
+          for i in {1..30}; do
+            if argocd app get nginx-app-pr-$PR_NUMBER >/dev/null 2>&1; then
+              echo "✅ ArgoCD application is ready"
+              break
+            fi
+            echo "Waiting for application to be ready... ($i/30)"
+            sleep 2
+          done
+          
+          # Check if there are any ongoing operations
+          echo "=== Checking for ongoing operations ==="
+          OPERATION_STATUS=$(argocd app get nginx-app-pr-$PR_NUMBER -o json | jq -r '.status.operationState.phase // "None"')
+          echo "Current operation status: $OPERATION_STATUS"
+          
+          # Wait for any ongoing operations to complete
+          if [ "$OPERATION_STATUS" != "None" ] && [ "$OPERATION_STATUS" != "null" ]; then
+            echo "Waiting for ongoing operation to complete..."
+            argocd app wait nginx-app-pr-$PR_NUMBER --operation --timeout 300
+          fi
           
           echo "=== Syncing Fresh Ephemeral Application ==="
-          argocd app sync nginx-app-pr-$PR_NUMBER
+          
+          # Try sync with retry logic
+          for attempt in {1..3}; do
+            echo "Sync attempt $attempt/3"
+            if argocd app sync nginx-app-pr-$PR_NUMBER; then
+              echo "✅ Sync successful"
+              break
+            else
+              echo "❌ Sync failed, waiting before retry..."
+              sleep 10
+            fi
+          done
+          
+          # Wait for health
+          echo "=== Waiting for Application Health ==="
           argocd app wait nginx-app-pr-$PR_NUMBER --health --timeout 300
           
           echo "=== Ephemeral Application Status ==="
