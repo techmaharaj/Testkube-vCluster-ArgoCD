@@ -142,71 +142,78 @@ jobs:
           echo "=== vCluster connectivity established ==="
 
       # ==================== ArgoCD Module ====================
-      - name: Get vCluster Service Details (Fixed)
-        id: get-vcluster-details-fixed
+      - name: Setup ArgoCD connectivity (Fixed)
+        id: setup-argocd-fixed
         run: |
-          echo "=== Getting vCluster Service Details ==="
+          echo "=== Setting up ArgoCD connectivity ==="
           
-          # Ensure we're on host context
+          # Switch back to host context for ArgoCD operations
           kubectl config use-context $HOST_CONTEXT
           
-          # List all services in the vCluster namespace
-          echo "Services in demo-$PR_NUMBER namespace:"
-          kubectl get svc -n demo-$PR_NUMBER
+          # Verify we're on the host cluster
+          echo "Current context: $(kubectl config current-context)"
+          echo "Available namespaces on host:"
+          kubectl get namespaces
           
-          # Get the actual vCluster API server service (not DNS service)
-          # The main vCluster service typically has port 443 and matches the vCluster name pattern
-          VCLUSTER_SERVICE_NAME="testkube-vcluster-$PR_NUMBER"
-          VCLUSTER_SERVICE_PORT="443"
+          # Verify ArgoCD is running
+          echo "Checking ArgoCD pods..."
+          kubectl get pods -n argocd
           
-          # Verify the service exists
-          if kubectl get svc $VCLUSTER_SERVICE_NAME -n demo-$PR_NUMBER >/dev/null 2>&1; then
-            echo "✅ Found vCluster API service: $VCLUSTER_SERVICE_NAME"
-            # Get the actual port from the service
-            VCLUSTER_SERVICE_PORT=$(kubectl get svc $VCLUSTER_SERVICE_NAME -n demo-$PR_NUMBER -o jsonpath='{.spec.ports[?(@.port==443)].port}')
-            if [ -z "$VCLUSTER_SERVICE_PORT" ]; then
-              VCLUSTER_SERVICE_PORT="443"  # fallback
-            fi
+          # Get ArgoCD admin password
+          echo "Getting ArgoCD admin password..."
+          ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          
+          # Check if ArgoCD server is exposed via LoadBalancer
+          ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          
+          if [ -z "$ARGOCD_SERVER" ]; then
+            echo "ArgoCD server not exposed via LoadBalancer, using port-forward..."
+            kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+            ARGOCD_PORT_FORWARD_PID=$!
+            echo "ARGOCD_PORT_FORWARD_PID=$ARGOCD_PORT_FORWARD_PID" >> $GITHUB_ENV
+            sleep 15
+            ARGOCD_SERVER="localhost:8080"
           else
-            echo "❌ vCluster API service not found, listing all services:"
-            kubectl get svc -n demo-$PR_NUMBER
-            exit 1
+            echo "ArgoCD server available at LoadBalancer IP: $ARGOCD_SERVER"
           fi
           
-          echo "vCluster API service name: $VCLUSTER_SERVICE_NAME"
-          echo "vCluster API service port: $VCLUSTER_SERVICE_PORT"
+          # Save to environment for next steps
+          echo "ARGOCD_SERVER=$ARGOCD_SERVER" >> $GITHUB_ENV
+          echo "ARGOCD_PASSWORD=$ARGOCD_PASSWORD" >> $GITHUB_ENV
           
-          # Set environment variables for use in subsequent steps
-          echo "VCLUSTER_SERVICE_NAME=$VCLUSTER_SERVICE_NAME" >> $GITHUB_ENV
-          echo "VCLUSTER_SERVICE_PORT=$VCLUSTER_SERVICE_PORT" >> $GITHUB_ENV
+          # Test ArgoCD connectivity
+          echo "Testing ArgoCD connectivity..."
+          curl -k https://$ARGOCD_SERVER/healthz || echo "ArgoCD health check completed"
           
-          # Get the correct secret name (the one with certificate data)
-          VCLUSTER_SECRET_NAME="vc-testkube-vcluster-$PR_NUMBER"
-          
-          # Verify the secret exists
-          if kubectl get secret $VCLUSTER_SECRET_NAME -n demo-$PR_NUMBER >/dev/null 2>&1; then
-            echo "✅ Found vCluster secret: $VCLUSTER_SECRET_NAME"
-          else
-            echo "❌ vCluster secret not found, listing all secrets:"
-            kubectl get secrets -n demo-$PR_NUMBER
-            exit 1
-          fi
-          
-          echo "VCLUSTER_SECRET_NAME=$VCLUSTER_SECRET_NAME" >> $GITHUB_ENV
-          
-          echo "=== vCluster service details collected successfully ==="
+          echo "=== ArgoCD connectivity established ==="
+          echo "ArgoCD Server: $ARGOCD_SERVER"
+          echo "Password retrieved successfully"
 
-      - name: Register vCluster with ArgoCD (Fixed)
-        id: register-vcluster-final
+      - name: Register vCluster with ArgoCD (Environment Fixed)
+        id: register-vcluster-env-fixed
         run: |
           echo "=== Creating service account in vCluster for ArgoCD ==="
           
           # Debug: Print all environment variables
           echo "Environment variables:"
           echo "ARGOCD_SERVER: $ARGOCD_SERVER"
-          echo "ARGOCD_PASSWORD: $ARGOCD_PASSWORD"
+          echo "ARGOCD_PASSWORD: [REDACTED - Length: ${#ARGOCD_PASSWORD}]"
           echo "VCLUSTER_SERVICE_NAME: $VCLUSTER_SERVICE_NAME"
           echo "VCLUSTER_SERVICE_PORT: $VCLUSTER_SERVICE_PORT"
+          
+          # Verify we have required variables
+          if [ -z "$ARGOCD_SERVER" ] || [ -z "$ARGOCD_PASSWORD" ]; then
+            echo "❌ Missing ArgoCD environment variables. Trying to retrieve them again..."
+            
+            # Switch to host context and get ArgoCD details again
+            kubectl config use-context $HOST_CONTEXT
+            
+            ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+            ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "localhost:8080")
+            
+            echo "Retrieved ARGOCD_SERVER: $ARGOCD_SERVER"
+            echo "Retrieved ARGOCD_PASSWORD: [REDACTED]"
+          fi
           
           # Get the actual vCluster context name
           VCLUSTER_CONTEXT_NAME=$(kubectl config get-contexts --kubeconfig=vcluster-kubeconfig.yaml --no-headers | awk '{print $2}' | head -1)
@@ -258,14 +265,11 @@ jobs:
           
           echo "Created ArgoCD kubeconfig for vCluster"
           
-          # Test connectivity from host cluster to vCluster (proper endpoint)
-          echo "=== Testing vCluster API connectivity ==="
-          kubectl run test-vcluster-api --image=curlimages/curl:latest --rm -i --restart=Never -- \
-            curl -k $VCLUSTER_SERVER/version --max-time 10 || echo "API connectivity test completed"
-          
           # Login to ArgoCD with explicit parameters
           echo "=== Logging into ArgoCD ==="
-          argocd login $ARGOCD_SERVER --username admin --password "$ARGOCD_PASSWORD" --insecure
+          echo "Attempting login to: $ARGOCD_SERVER"
+          
+          argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
           echo "=== Registering vCluster with ArgoCD ==="
           argocd cluster add vcluster-pr-$PR_NUMBER \
