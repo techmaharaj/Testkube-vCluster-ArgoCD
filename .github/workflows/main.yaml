@@ -51,11 +51,44 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
           
+          echo "=== Available Namespaces ==="
+          kubectl get namespaces
+          
           echo "=== Checking ArgoCD ==="
-          kubectl get pods -n argocd
+          kubectl get pods -n argocd || echo "ArgoCD namespace not found"
           
           echo "=== Checking Testkube ==="
           kubectl get pods -n testkube || echo "Testkube namespace not found"
+
+      - name: Install or Verify ArgoCD
+        id: install-argocd
+        run: |
+          echo "=== Checking ArgoCD Installation ==="
+          
+          # Check if ArgoCD namespace exists and has running pods
+          if kubectl get namespace argocd >/dev/null 2>&1; then
+            echo "ArgoCD namespace exists, checking pods..."
+            ARGOCD_PODS=$(kubectl get pods -n argocd --no-headers 2>/dev/null | wc -l)
+            if [ "$ARGOCD_PODS" -gt 0 ]; then
+              echo "ArgoCD pods found, checking if they're ready..."
+              kubectl get pods -n argocd
+              # Wait for existing ArgoCD to be ready
+              kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd || echo "ArgoCD server not ready yet"
+            else
+              echo "ArgoCD namespace exists but no pods found, installing..."
+              kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+              kubectl wait --for=condition=available --timeout=600s deployment/argocd-server -n argocd
+            fi
+          else
+            echo "ArgoCD not found, installing..."
+            kubectl create namespace argocd
+            kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+            kubectl wait --for=condition=available --timeout=600s deployment/argocd-server -n argocd
+          fi
+          
+          echo "=== ArgoCD Status ==="
+          kubectl get pods -n argocd
+          kubectl get svc -n argocd
 
       # ==================== vCluster Module ====================
       - name: Create vCluster
@@ -83,25 +116,27 @@ jobs:
         run: |
           echo "=== Setting up vCluster connectivity ==="
           
-          # Create kubeconfig for vCluster
-          vcluster connect testkube-vcluster-$PR_NUMBER \
-            --namespace demo-$PR_NUMBER \
-            --server=https://testkube-vcluster-$PR_NUMBER.demo-$PR_NUMBER.svc.cluster.local \
-            --print > vcluster-kubeconfig.yaml
+          # Save the current (host) context before connecting to vCluster
+          HOST_CONTEXT=$(kubectl config current-context)
+          echo "HOST_CONTEXT=$HOST_CONTEXT" >> $GITHUB_ENV
+          echo "Host cluster context: $HOST_CONTEXT"
           
-          # Test vCluster connectivity by connecting directly
+          # Create kubeconfig for ArgoCD to use (without switching context)
+          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER --print > vcluster-kubeconfig.yaml
+          
+          # Now connect to vCluster (this will switch the default context)
           vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
           VCLUSTER_PID=$!
           echo "VCLUSTER_PID=$VCLUSTER_PID" >> $GITHUB_ENV
           
-          # Wait for connection
+          # Wait for connection to establish
           sleep 30
           
           echo "=== Verifying vCluster connection ==="
           kubectl get nodes
           kubectl get namespaces
           
-          # Create default namespace if it doesn't exist
+          # Create default namespace if it doesn't exist in vCluster
           kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
           
           echo "=== vCluster connectivity established ==="
@@ -112,29 +147,48 @@ jobs:
         run: |
           echo "=== Setting up ArgoCD connectivity ==="
           
+          # Switch back to host context for ArgoCD operations
+          kubectl config use-context $HOST_CONTEXT
+          
+          # Verify we're on the host cluster
+          echo "Current context: $(kubectl config current-context)"
+          echo "Available namespaces on host:"
+          kubectl get namespaces
+          
+          # Verify ArgoCD is running
+          echo "Checking ArgoCD pods..."
+          kubectl get pods -n argocd
+          
           # Get ArgoCD admin password
+          echo "Getting ArgoCD admin password..."
           ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
           echo "ARGOCD_PASSWORD=$ARGOCD_PASSWORD" >> $GITHUB_ENV
           
-          # Check if ArgoCD server is exposed
+          # Check if ArgoCD server is exposed via LoadBalancer
           ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
           
           if [ -z "$ARGOCD_SERVER" ]; then
-            echo "Setting up ArgoCD port-forward..."
+            echo "ArgoCD server not exposed via LoadBalancer, using port-forward..."
             kubectl port-forward svc/argocd-server -n argocd 8080:443 &
             ARGOCD_PORT_FORWARD_PID=$!
             echo "ARGOCD_PORT_FORWARD_PID=$ARGOCD_PORT_FORWARD_PID" >> $GITHUB_ENV
             sleep 15
             ARGOCD_SERVER="localhost:8080"
+          else
+            echo "ArgoCD server available at LoadBalancer IP: $ARGOCD_SERVER"
           fi
           
           echo "ARGOCD_SERVER=$ARGOCD_SERVER" >> $GITHUB_ENV
+          
           echo "=== ArgoCD connectivity established ==="
 
       - name: Register vCluster with ArgoCD
         id: register-vcluster
         run: |
           echo "=== Registering vCluster with ArgoCD ==="
+          
+          # Ensure we're on host context for ArgoCD operations
+          kubectl config use-context $HOST_CONTEXT
           
           # Login to ArgoCD
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
@@ -146,6 +200,7 @@ jobs:
             --yes
           
           # Verify cluster was added
+          echo "Registered clusters:"
           argocd cluster list
           
           echo "=== vCluster registered with ArgoCD ==="
@@ -154,6 +209,9 @@ jobs:
         id: deploy-app
         run: |
           echo "=== Creating ArgoCD Application ==="
+          
+          # Ensure we're on host context for ArgoCD operations
+          kubectl config use-context $HOST_CONTEXT
           
           # Create ArgoCD Application manifest
           cat > argocd-app-pr-$PR_NUMBER.yaml << EOF
@@ -182,7 +240,7 @@ jobs:
               - ApplyOutOfSyncOnly=true
           EOF
           
-          # Apply the application
+          # Apply the application to host cluster (where ArgoCD runs)
           kubectl apply -f argocd-app-pr-$PR_NUMBER.yaml
           
           echo "=== ArgoCD Application created ==="
@@ -192,6 +250,9 @@ jobs:
         id: wait-sync
         run: |
           echo "=== Waiting for ArgoCD to sync application ==="
+          
+          # Ensure we're on host context for ArgoCD operations
+          kubectl config use-context $HOST_CONTEXT
           
           # Login again to ensure session is active
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure
@@ -208,6 +269,12 @@ jobs:
         id: verify-deployment
         run: |
           echo "=== Verifying deployment in vCluster ==="
+          
+          # Switch to vCluster context to check deployment
+          kubectl config use-context vcluster_testkube-vcluster-$PR_NUMBER\_demo-$PR_NUMBER
+          
+          echo "Current context: $(kubectl config current-context)"
+          echo "Checking deployment in vCluster..."
           
           # Check deployment status
           kubectl get all -n default
@@ -232,6 +299,9 @@ jobs:
         run: |
           echo "=== Provisioning Testkube ephemeral runner ==="
           
+          # Switch to host context for Testkube operations
+          kubectl config use-context $HOST_CONTEXT
+          
           # Provision ephemeral runner
           testkube install runner github-action-runner-${{ github.run_id }} \
             --create \
@@ -241,7 +311,7 @@ jobs:
           
           echo "=== Running tests ==="
           
-          # Run the test
+          # Run the test (targeting the vCluster)
           testkube run testworkflow curl-nginx-app \
            -f \
            --config url=http://nginx-service.default.svc.cluster.local \
@@ -255,6 +325,9 @@ jobs:
         if: always()
         run: |
           echo "=== Cleaning up ArgoCD Application ==="
+          
+          # Switch to host context for ArgoCD operations
+          kubectl config use-context $HOST_CONTEXT || true
           
           # Login to ArgoCD
           argocd login $ARGOCD_SERVER --username admin --password $ARGOCD_PASSWORD --insecure || true
@@ -272,6 +345,9 @@ jobs:
         run: |
           echo "=== Cleaning up Testkube resources ==="
           
+          # Switch to host context for Testkube operations
+          kubectl config use-context $HOST_CONTEXT || true
+          
           # Delete Testkube runner
           testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall || true
           
@@ -287,6 +363,9 @@ jobs:
           pkill -f "kubectl port-forward" || true
           pkill -f "vcluster connect" || true
           
+          # Switch back to host context
+          kubectl config use-context $HOST_CONTEXT || true
+          
           # Disconnect vCluster
           vcluster disconnect || true
           
@@ -295,3 +374,19 @@ jobs:
           kubectl delete namespace demo-$PR_NUMBER --ignore-not-found=true
           
           echo "=== vCluster cleanup completed ==="
+
+      - name: Final Status Check
+        if: always()
+        run: |
+          echo "=== Final Status Check ==="
+          
+          # Switch to host context
+          kubectl config use-context $HOST_CONTEXT || true
+          
+          echo "Remaining demo namespaces:"
+          kubectl get namespaces | grep demo- || echo "No demo namespaces remaining"
+          
+          echo "ArgoCD applications:"
+          kubectl get applications -n argocd || echo "No applications found"
+          
+          echo "=== Workflow completed ==="
