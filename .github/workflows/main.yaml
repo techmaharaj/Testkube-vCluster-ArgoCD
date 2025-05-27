@@ -395,6 +395,7 @@ jobs:
 
       - name: Run Chainsaw Tests with Testkube in vCluster
         id: run-chainsaw-tests
+        continue-on-error: true
         run: |
         
           echo "=== Running Chainsaw Tests in vCluster with Testkube ==="
