@@ -161,26 +161,29 @@ jobs:
           kubectl get nodes
           kubectl get namespaces
           
-          # Get the vCluster context name BEFORE saving kubeconfig
+          # IMPORTANT: Get the vCluster context name WHILE we're still connected
           VCLUSTER_CONTEXT=$(kubectl config current-context)
           echo "vCluster context name: $VCLUSTER_CONTEXT"
           echo "VCLUSTER_CONTEXT=$VCLUSTER_CONTEXT" >> $GITHUB_ENV
           
-          # Save vCluster kubeconfig while we're still connected
+          # Save vCluster kubeconfig while we're still connected to vCluster
           echo "=== Saving vCluster kubeconfig ==="
           kubectl config view --raw > /tmp/vcluster-config.yaml
           
           # Debug: Check what contexts are available in the saved kubeconfig
           echo "=== Debugging saved kubeconfig ==="
+          echo "Available contexts:"
           kubectl config view --kubeconfig /tmp/vcluster-config.yaml -o jsonpath='{.contexts[*].name}'
           echo ""
+          echo "Current context in saved kubeconfig:"
           kubectl config view --kubeconfig /tmp/vcluster-config.yaml -o jsonpath='{.current-context}'
           echo ""
           
-          # Switch back to host context
+          # NOW switch back to host context (after capturing vCluster context)
           kubectl config use-context $HOST_CONTEXT
           
           echo "✅ vCluster kubeconfig prepared for ArgoCD"
+          echo "✅ vCluster context captured: $VCLUSTER_CONTEXT"
 
       - name: Configure ArgoCD to Deploy to vCluster
         id: setup-argocd-vcluster
