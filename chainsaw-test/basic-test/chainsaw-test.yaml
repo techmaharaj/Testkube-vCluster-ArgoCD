@@ -3,9 +3,7 @@ kind: Test
 metadata:
   name: assert-argocd-deployment
 spec:
-  # Test in default namespace where ArgoCD deployed
-  namespace: default
   steps:
-    - try:
-        - assert:
-            file: assert-deployment.yaml
+  - try:
+    - assert:
+        file: assert-deployment.yaml
