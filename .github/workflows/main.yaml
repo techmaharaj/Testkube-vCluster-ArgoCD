@@ -402,41 +402,42 @@ jobs:
       - name: Run Tests with Testkube in vCluster
         id: run-tests
         run: |
-          
-          # Switch back to host context
-          kubectl config use-context $HOST_CONTEXT
-          
-          # Wait for ArgoCD deployment
-          echo "Checking ArgoCD application..."
-          argocd app wait nginx-vcluster-pr-$PR_NUMBER --timeout 300 || echo "ArgoCD wait timed out"
-          
-          # Verify nginx is running in vCluster
-          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
-          sleep 20
-          
-          echo "=== Verifying nginx deployment in vCluster ==="
-          kubectl get pods,svc -n default
-          
-          # Get nginx service IP from vCluster
-          NGINX_SERVICE_IP=$(kubectl get svc nginx-service -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "nginx-service.default.svc.cluster.local")
-          echo "Nginx service: $NGINX_SERVICE_IP"
-          
-          # Switch back to host for test execution
-          kubectl config use-context $HOST_CONTEXT
-          
+        
           echo "=== Running Tests in vCluster with Testkube ==="
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
+          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
+          sleep 30
+
+          # Install agent with cloud connection
+          helm repo add testkube https://kubeshop.github.io/helm-charts
+          helm repo update
           
+          helm install testkube testkube/testkube \
+            --namespace testkube \
+            --create-namespace \
+            --set testkube-api.cloud.key="$TESTKUBE_TOKEN" \
+            --set testkube-api.cloud.orgId="$TESTKUBE_ORG_ID" \
+            --set testkube-api.cloud.envId="$TESTKUBE_ENV_ID" \
+            --set testkube-api.cloud.url="$TESTKUBE_CLOUD_URL" \
+            --set mongodb.enabled=false \
+            --set testkube-dashboard.enabled=false \
+            --set minio.enabled=false
           
-          # Run the test workflow targeting our nginx app deployed via ArgoCD
+          # Wait for agent to be ready
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=testkube-api-server --timeout=300s -n testkube
+          
+          # Switch back to host context for test execution
+          kubectl config use-context $HOST_CONTEXT
+          
+          # Run test using the agent directly
           testkube run testworkflow curl-nginx-app \
-            -f \
-            --config url=$NGINX_SERVICE_IP \
-            --target name=$ACTUAL_RUNNER_NAME \
-            --tag pull-request=PR-${{ github.run_id }} \
-            --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
-            --tag demo=gitopscon-ephemeral-env
+            --variable host="nginx-service.default.svc.cluster.local" \
+            --variable port="80" \
+            --context testkube \
+            --namespace testkube \
+            --timeout 900s \
+            --follow
           
           echo "=== Test Results ==="
           echo "✅ ArgoCD deployment to vCluster verified via Testkube"
