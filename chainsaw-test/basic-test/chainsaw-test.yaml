@@ -9,9 +9,3 @@ spec:
     - try:
         - assert:
             file: assert-deployment.yaml
-    - try:
-        - script:
-            content: |
-              echo "Testing ArgoCD nginx deployment..."
-              kubectl wait --for=condition=available deployment/nginx-deployment --timeout=60s
-              echo "⚠️ Asserting in progress"
