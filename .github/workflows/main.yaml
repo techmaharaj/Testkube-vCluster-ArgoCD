@@ -222,11 +222,39 @@ jobs:
             --name "vcluster-pr-$PR_NUMBER" \
             --yes
           
-          # Get the cluster server URL that ArgoCD assigned
-          VCLUSTER_SERVER=$(argocd cluster list -o server | grep vcluster-pr-$PR_NUMBER)
+          # Wait a moment for the cluster to be registered
+          sleep 10
+          
+          # Debug: List all clusters to see what's available
+          echo "=== Debugging ArgoCD clusters ==="
+          argocd cluster list
+          echo ""
+          
+          # Get the cluster server URL - try multiple approaches
+          echo "=== Getting vCluster server URL ==="
+          VCLUSTER_SERVER=""
+          
+          # Method 1: Try exact match with name
+          VCLUSTER_SERVER=$(argocd cluster list -o name | grep "vcluster-pr-$PR_NUMBER" | head -1)
+          
+          if [ -z "$VCLUSTER_SERVER" ]; then
+            echo "Method 1 failed, trying method 2..."
+            # Method 2: Try getting the server URL directly
+            VCLUSTER_SERVER=$(argocd cluster list -o server | grep -v "^https://kubernetes.default.svc$" | grep -v "^NAME$" | head -1)
+          fi
+          
+          if [ -z "$VCLUSTER_SERVER" ]; then
+            echo "❌ Failed to get vCluster server URL"
+            echo "Available clusters:"
+            argocd cluster list
+            exit 1
+          fi
+          
+          echo "Using vCluster server: $VCLUSTER_SERVER"
           echo "VCLUSTER_SERVER=$VCLUSTER_SERVER" >> $GITHUB_ENV
           
           # Create ArgoCD application
+          echo "=== Creating ArgoCD application ==="
           argocd app create nginx-vcluster-pr-$PR_NUMBER \
             --repo ${{ github.server_url }}/${{ github.repository }} \
             --path k8s \
@@ -239,9 +267,11 @@ jobs:
             --upsert
           
           # Sync the application
+          echo "=== Syncing ArgoCD application ==="
           argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300
           
-          echo "✅ ArgoCD to vCluster configuration completed"       
+          echo "✅ ArgoCD to vCluster configuration completed"
+             
       # ==================== Testkube Module ====================
       - name: Setup Testkube
         uses: kubeshop/setup-testkube@v1
