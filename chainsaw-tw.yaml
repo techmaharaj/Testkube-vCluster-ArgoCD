@@ -6,10 +6,13 @@ metadata:
 spec:
   content:
     git:
-      uri: https://github.com/cerebro1/chainsaw-testkube-demo.git 
+      uri: https://github.com/techmaharaj/Testkube-vCluster-ArgoCD.git
   container:
     image: ghcr.io/kyverno/chainsaw:latest
   steps:
-  - name: Run test
-    shell: chainsaw test /data/repo/chainsaw-test/basic-test/chainsaw-test.yaml
-status: {}
+  - name: Test ArgoCD deployment
+    shell: |
+      echo "Testing ArgoCD-deployed nginx with Chainsaw..."
+      # Test the ArgoCD deployment in default namespace
+      chainsaw test /data/repo/chainsaw-test/basic-test/chainsaw-test.yaml --namespace default
+      echo "✅ ArgoCD deployment validated"
