@@ -401,12 +401,12 @@ jobs:
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
           # Run the test workflow to validate the Nginx deployment using chainsaw
-          testkube run testworkflow chainsaw-nginx \
+          testkube run testworkflow chainsaw-nginx -f \
             --target name=$ACTUAL_RUNNER_NAME \
             --tag test-type=chainsaw \
             --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
-            --tag demo=gitopscon-chainsaw
+            --tag demo=gitopscon-chainsaw 
 
       - name: Run k6 Tests with Testkube in vCluster
         id: run-k6-tests
@@ -416,7 +416,7 @@ jobs:
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
            # Run the test workflow to load test the Nginx service
-          testkube run testworkflow k6-sample \
+          testkube run testworkflow k6-sample -f \
             --target name=$ACTUAL_RUNNER_NAME \
             --tag test-type=k6 \
             --tag pr=PR-${{ github.run_id }} \
@@ -427,9 +427,6 @@ jobs:
       - name: Cleanup Testkube Runner
         if: always()
         run: |
-          # give testkube time to retrieve logs.. 
-          sleep 30
-          
           echo "=== Cleaning up Testkube runner ==="
           testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall || true
           echo "=== Testkube runner cleanup completed ==="
