@@ -341,38 +341,14 @@ jobs:
           echo "=== Running Tests in vCluster with Testkube ==="
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
-          vcluster connect testkube-vcluster-$PR_NUMBER --namespace demo-$PR_NUMBER &
-          sleep 30
-
-          # Install agent with cloud connection
-          helm repo add testkube https://kubeshop.github.io/helm-charts
-          helm repo update
-          
-          helm install testkube testkube/testkube \
-            --namespace testkube \
-            --create-namespace \
-            --set testkube-api.cloud.key="$TESTKUBE_TOKEN" \
-            --set testkube-api.cloud.orgId="$TESTKUBE_ORG_ID" \
-            --set testkube-api.cloud.envId="$TESTKUBE_ENV_ID" \
-            --set testkube-api.cloud.url="$TESTKUBE_CLOUD_URL" \
-            --set mongodb.enabled=false \
-            --set testkube-dashboard.enabled=false \
-            --set minio.enabled=false
-          
-          # Wait for agent to be ready
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=testkube-api-server --timeout=300s -n testkube
-          
-          # Switch back to host context for test execution
-          kubectl config use-context $HOST_CONTEXT
-          
-          # Run test using the agent directly
+          # Run the test workflow targeting our nginx app deployed via ArgoCD
           testkube run testworkflow curl-nginx-app \
-            --variable host="nginx-service.default.svc.cluster.local" \
-            --variable port="80" \
-            --context testkube \
-            --namespace testkube \
-            --timeout 900s \
-            --follow
+            -f \
+            --config url=http://nginx-service.default.svc.cluster.local \
+            --target name=$ACTUAL_RUNNER_NAME \
+            --tag pull-request=PR-${{ github.run_id }} \
+            --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
+            --tag demo=gitopscon-ephemeral-env
           
           echo "=== Test Results ==="
           echo "✅ ArgoCD deployment to vCluster verified via Testkube"
