@@ -358,7 +358,7 @@ jobs:
           # Provision ephemeral runner in vCluster
           testkube install runner github-action-runner-${{ github.run_id }} \
             --create \
-            --env testkube-demo \
+            --env testkube-gke \
             --namespace testkube \
             --floating
 
@@ -405,7 +405,6 @@ jobs:
           # Run the test workflow to validate the ArgoCD deployment using chainsaw
           testkube run testworkflow simple-chainsaw \
             --target name=$ACTUAL_RUNNER_NAME \
-            --namespace=nginx \
             --tag test-type=chainsaw \
             --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
@@ -414,7 +413,6 @@ jobs:
            # Run the test workflow to load test the Nginx service
           testkube run testworkflow k6-sample \
             --target name=$ACTUAL_RUNNER_NAME \
-            --namespace=nginx \
             --tag test-type=k6 \
             --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
