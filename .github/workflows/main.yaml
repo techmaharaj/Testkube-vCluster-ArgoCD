@@ -427,6 +427,9 @@ jobs:
       - name: Cleanup Testkube Runner
         if: always()
         run: |
+          # give testkube time to retrieve logs.. 
+          sleep 30
+          
           echo "=== Cleaning up Testkube runner ==="
           testkube delete runner github-action-runner-${{ github.run_id }} --delete --uninstall || true
           echo "=== Testkube runner cleanup completed ==="
