@@ -395,20 +395,27 @@ jobs:
           
           echo "=== Testkube runner provisioned in vCluster ==="
 
-      - name: Run Tests with Testkube in vCluster
-        id: run-tests
+      - name: Run Chainsaw Tests with Testkube in vCluster
+        id: run-chainsaw-tests
         run: |
         
-          echo "=== Running Tests in vCluster with Testkube ==="
+          echo "=== Running Chainsaw Tests in vCluster with Testkube ==="
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
-          # Run the test workflow to validate the ArgoCD deployment using chainsaw
-          testkube run testworkflow simple-chainsaw \
+          # Run the test workflow to validate the Nginx deployment using chainsaw
+          testkube run testworkflow chainsaw-nginx \
             --target name=$ACTUAL_RUNNER_NAME \
             --tag test-type=chainsaw \
             --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
             --tag demo=gitopscon-chainsaw
+
+      - name: Run k6 Tests with Testkube in vCluster
+        id: run-k6-tests
+        run: |
+        
+          echo "=== Running k6 Tests in vCluster with Testkube ==="
+          echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
            # Run the test workflow to load test the Nginx service
           testkube run testworkflow k6-sample \
@@ -417,12 +424,7 @@ jobs:
             --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
             --tag demo=gitopscon-chainsaw
-
           
-          echo "=== Test Results ==="
-          echo "✅ ArgoCD deployment to vCluster verified via Testkube"
-          echo "✅ Ephemeral testing environment validated"
-
       # ==================== Cleanup Module ====================
       - name: Cleanup Testkube Runner
         if: always()
