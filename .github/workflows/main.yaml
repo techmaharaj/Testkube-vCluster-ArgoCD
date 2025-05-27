@@ -322,8 +322,6 @@ jobs:
             --dest-namespace nginx \
             --revision ${{ github.head_ref || github.ref_name }} \
             --sync-policy automated \
-            --auto-prune \
-            --self-heal \
             --upsert
           
           # Sync the application
