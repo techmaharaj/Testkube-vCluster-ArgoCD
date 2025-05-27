@@ -162,16 +162,15 @@ jobs:
           kubectl get namespaces
           
           # Create default namespace if it doesn't exist in vCluster
-          kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace default
           
           # Create service account for ArgoCD in vCluster
-          kubectl create serviceaccount argocd-manager -n kube-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create serviceaccount argocd-manager -n kube-system
           
           # Create cluster role binding for ArgoCD
           kubectl create clusterrolebinding argocd-manager-binding \
             --clusterrole=cluster-admin \
-            --serviceaccount=kube-system:argocd-manager \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --serviceaccount=kube-system:argocd-manager
           
           # Wait for service account with better verification
           echo "Waiting for service account to be fully ready..."
