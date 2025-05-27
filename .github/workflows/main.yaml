@@ -338,7 +338,7 @@ jobs:
         uses: kubeshop/setup-testkube@v1
         with:
           organization: ${{ secrets.TESTKUBE_ORG_ID }}
-          environment: ${{ secrets.TESTKUBE_ENV_ID }}
+          environment: tkcenv_8d3deec863157cd6
           token: ${{ secrets.TESTKUBE_API_TOKEN }}
 
       - name: Provision ephemeral runner in vCluster
