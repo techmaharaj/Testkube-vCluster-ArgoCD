@@ -13,6 +13,6 @@ spec:
   - name: Test ArgoCD deployment
     shell: |
       echo "Testing ArgoCD-deployed nginx with Chainsaw..."
-      # Test the ArgoCD deployment in default namespace
-      chainsaw test /data/repo/chainsaw-test/basic-test/chainsaw-test.yaml --namespace default
+      # Test the ArgoCD deployment in nginx namespace
+      chainsaw test /data/repo/chainsaw-test/basic-test/chainsaw-test.yaml --namespace nginx
       echo "✅ ArgoCD deployment validated"
