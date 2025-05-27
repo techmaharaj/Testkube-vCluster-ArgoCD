@@ -323,8 +323,9 @@ jobs:
             --upsert
           
           # Sync the application
-          echo "=== Syncing ArgoCD application ==="
-          argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300
+          argocd app sync nginx-vcluster-pr-$PR_NUMBER \
+            --force \
+            --timeout 300
           
           echo "✅ ArgoCD to vCluster configuration completed"
              
