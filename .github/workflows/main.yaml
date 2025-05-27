@@ -156,6 +156,9 @@ jobs:
           
           # Wait for connection to establish
           sleep 30
+
+          echo "=== Creating nginx namespace in vCluster ==="
+          kubectl create namespace nginx --dry-run=client -o yaml | kubectl apply -f -
           
           echo "=== Verifying vCluster connection ==="
           kubectl get nodes
