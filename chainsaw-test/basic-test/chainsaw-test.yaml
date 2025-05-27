@@ -1,12 +1,19 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: assert-deployment
+  name: assert-argocd-deployment
 spec:
+  # Test in default namespace where ArgoCD deployed
+  namespace: default
   steps:
-    - try:
-        - apply:
-            file: deployment.yaml
     - try:
         - assert:
             file: assert-deployment.yaml
+    - try:
+        - script:
+            content: |
+              echo "Testing ArgoCD nginx deployment..."
+              kubectl wait --for=condition=available deployment/nginx-deployment --timeout=60s
+              kubectl run test-pod-$(date +%s) --image=curlimages/curl:8.7.1 --rm -i --restart=Never -- \
+                curl -f http://nginx-service.default.svc.cluster.local
+              echo "✅ Service test passed"
