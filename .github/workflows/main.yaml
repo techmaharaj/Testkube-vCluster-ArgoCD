@@ -399,13 +399,12 @@ jobs:
           echo "=== Running test with target runner: $ACTUAL_RUNNER_NAME ==="
 
           # Run the test workflow targeting our nginx app deployed via ArgoCD
-          testkube run testworkflow curl-nginx-app \
-            -f \
-            --config url=http://nginx-service.default.svc.cluster.local \
+          testkube run testworkflow simple-chainsaw \
             --target name=$ACTUAL_RUNNER_NAME \
-            --tag pull-request=PR-${{ github.run_id }} \
+            --tag test-type=chainsaw \
+            --tag pr=PR-${{ github.run_id }} \
             --tag argocd-deployment=nginx-vcluster-pr-$PR_NUMBER \
-            --tag demo=gitopscon-ephemeral-env
+            --tag demo=gitopscon-chainsaw
           
           echo "=== Test Results ==="
           echo "✅ ArgoCD deployment to vCluster verified via Testkube"
