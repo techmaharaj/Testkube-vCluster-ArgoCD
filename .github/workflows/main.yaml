@@ -195,7 +195,7 @@ jobs:
           
           # Add vCluster using kubeconfig (SIMPLIFIED)
           echo "=== Adding vCluster to ArgoCD using kubeconfig ==="
-          argocd cluster add \
+          argocd cluster add "$VCLUSTER_CONTEXT" \
             --kubeconfig /tmp/vcluster-config.yaml \
             --name "vcluster-pr-$PR_NUMBER" \
             --yes
