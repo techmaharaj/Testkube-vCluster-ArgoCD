@@ -161,8 +161,21 @@ jobs:
           kubectl get nodes
           kubectl get namespaces
           
-          # Save vCluster kubeconfig (SIMPLIFIED - no service account needed)
+          # Get the vCluster context name BEFORE saving kubeconfig
+          VCLUSTER_CONTEXT=$(kubectl config current-context)
+          echo "vCluster context name: $VCLUSTER_CONTEXT"
+          echo "VCLUSTER_CONTEXT=$VCLUSTER_CONTEXT" >> $GITHUB_ENV
+          
+          # Save vCluster kubeconfig while we're still connected
+          echo "=== Saving vCluster kubeconfig ==="
           kubectl config view --raw > /tmp/vcluster-config.yaml
+          
+          # Debug: Check what contexts are available in the saved kubeconfig
+          echo "=== Debugging saved kubeconfig ==="
+          kubectl config view --kubeconfig /tmp/vcluster-config.yaml -o jsonpath='{.contexts[*].name}'
+          echo ""
+          kubectl config view --kubeconfig /tmp/vcluster-config.yaml -o jsonpath='{.current-context}'
+          echo ""
           
           # Switch back to host context
           kubectl config use-context $HOST_CONTEXT
@@ -193,7 +206,13 @@ jobs:
           # Login to ArgoCD
           argocd login "$ARGOCD_SERVER" --username admin --password "$ARGOCD_PASSWORD" --insecure
           
-          # Add vCluster using kubeconfig (SIMPLIFIED)
+          # Debug: Show what we're working with
+          echo "Using vCluster context: $VCLUSTER_CONTEXT"
+          echo "Available contexts in kubeconfig:"
+          kubectl config view --kubeconfig /tmp/vcluster-config.yaml -o jsonpath='{.contexts[*].name}'
+          echo ""
+          
+          # Add vCluster using the context name we captured
           echo "=== Adding vCluster to ArgoCD using kubeconfig ==="
           argocd cluster add "$VCLUSTER_CONTEXT" \
             --kubeconfig /tmp/vcluster-config.yaml \
@@ -219,8 +238,7 @@ jobs:
           # Sync the application
           argocd app sync nginx-vcluster-pr-$PR_NUMBER --timeout 300
           
-          echo "✅ ArgoCD to vCluster configuration completed"
-       
+          echo "✅ ArgoCD to vCluster configuration completed"       
       # ==================== Testkube Module ====================
       - name: Setup Testkube
         uses: kubeshop/setup-testkube@v1
