@@ -360,7 +360,7 @@ jobs:
             --namespace testkube \
             --floating
 
-          helm upgrade --namespace testkube github-action-runner-${{ github.run_id }} kubeshop/testkube-runner --reuse-values \
+          helm upgrade --namespace testkube testkube-github-action-runner-${{ github.run_id }} kubeshop/testkube-runner --reuse-values \
             --set execution.additionalNamespaces.nginx.serviceAccount.autoCreate=true \
             --set execution.additionalNamespaces.nginx.serviceAccount.name=testkube-nginx --wait
 
