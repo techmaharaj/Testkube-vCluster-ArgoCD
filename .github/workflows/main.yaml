@@ -368,6 +368,7 @@ jobs:
           sleep 10
 
           kubectl get clusterroles -o yaml
+          kubectl get clusterrolebindings -o yaml
 
           # Check runner status
           echo "=== Checking runner status ==="
