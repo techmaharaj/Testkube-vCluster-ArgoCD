@@ -364,6 +364,8 @@ jobs:
             --set execution.additionalNamespaces.nginx.serviceAccount.autoCreate=true \
             --set execution.additionalNamespaces.nginx.serviceAccount.name=testkube-nginx --wait
 
+          kubectl create rolebinding sa-nginx-binding --role=admin --serviceaccount=nginx:testkube-nginx -n nginx
+
           # Wait a bit for runner to register
           sleep 10
 
