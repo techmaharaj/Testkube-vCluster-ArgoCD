@@ -18,3 +18,4 @@ Perfect for GitOps workflows where you want to test deployments in isolation wit
 - [ArgoCD Documentation](https://argo-cd.readthedocs.io/)
 - [Chainsaw Testing](https://kyverno.github.io/chainsaw/)
 
+have fun!
