@@ -3,6 +3,7 @@ kind: Test
 metadata:
   name: assert-argocd-deployment
 spec:
+  namespace: nginx
   steps:
   - try:
     - assert:
