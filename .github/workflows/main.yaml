@@ -415,6 +415,7 @@ jobs:
 
       - name: Run k6 Tests with Testkube in vCluster
         id: run-k6-tests
+        continue-on-error: true
         run: |
         
           echo "=== Running k6 Tests in vCluster with Testkube ==="
@@ -476,3 +477,9 @@ jobs:
           kubectl delete namespace demo-$PR_NUMBER --ignore-not-found=true
           
           echo "=== vCluster cleanup completed ==="
+
+      - name: Report Test Failures
+        if: failure() && (steps.run-chainsaw-tests.outcome == 'failure' || steps.run-k6-tests.outcome == 'failure')
+        run: |
+          echo "Tests failed!"
+          exit 1 
