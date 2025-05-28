@@ -479,7 +479,7 @@ jobs:
           echo "=== vCluster cleanup completed ==="
 
       - name: Report Test Failures
-        if: failure() && (steps.run-chainsaw-tests.outcome == 'failure' || steps.run-k6-tests.outcome == 'failure')
+        if: always() && (steps.run-chainsaw-tests.outcome == 'failure' || steps.run-k6-tests.outcome == 'failure')
         run: |
           echo "Tests failed!"
           exit 1 
