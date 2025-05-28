@@ -367,12 +367,6 @@ jobs:
           # Wait a bit for runner to register
           sleep 10
 
-          kubectl get clusterroles -o yaml
-          kubectl get clusterrolebindings -o yaml
-          kubectl get roles -n nginx -o yaml
-          kubectl get rolebindings -n nginx -o yaml
-          kubectl get serviceaccounts -n nginx -o yaml
-
           # Check runner status
           echo "=== Checking runner status ==="
           testkube get runners
